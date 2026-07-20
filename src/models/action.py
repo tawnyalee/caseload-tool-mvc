@@ -1,5 +1,6 @@
 import uuid
 from typing import List, Optional
+from src.models.enums import InteractionType
 
 class Action:
     def __init__(
@@ -17,7 +18,7 @@ class Action:
         note_subject: str = "",
         note_body: str = "",
         follow_up_note: str = "",
-        interaction_types: Optional[dict] = None,
+        interaction_type: Optional[InteractionType] = None,
         action_id: Optional[str] = None,
     ):
         self.id = action_id if action_id is not None else str(uuid.uuid4())
@@ -34,7 +35,7 @@ class Action:
         self.note_subject = note_subject
         self.note_body = note_body
         self.follow_up_note = follow_up_note
-        self.interaction_types = interaction_types if interaction_types is not None else {}
+        self.interaction_type = interaction_type
 
     @property
     def has_email(self) -> bool:

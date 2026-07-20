@@ -2,6 +2,7 @@ from src.models.group import Group
 from src.models.student import Student
 from src.models.action import Action
 from src.models.email_template import EmailTemplate
+from src.models.enums import InteractionType
 
 
 def test_group_unique_id_and_scenarios():
@@ -9,10 +10,8 @@ def test_group_unique_id_and_scenarios():
     group_a = Group(name="Group A")
     group_b = Group(name="Group B")
 
-    # Verify IDs are unique even if created back-to-back
     assert group_a.id != group_b.id
 
-    # Test managing scenario names
     group_a.add_scenario("Welcome Email")
     assert "Welcome Email" in group_a.scenarios
 
@@ -32,13 +31,19 @@ def test_student_properties():
 
 
 def test_action_flags_and_properties():
-    """Verify action flags and default values."""
-    action = Action(name="Follow Up", is_email=True, is_text=False)
+    """Verify action flags, defaults, and interaction types."""
+    action = Action(
+        name="Follow Up",
+        is_email=True,
+        is_text=False,
+        interaction_type=InteractionType.SINGLE_EMAIL,
+    )
 
     assert action.has_email is True
     assert action.has_text is False
     assert action.filters == []
-    assert action.interaction_types == {}
+    assert action.interaction_type == InteractionType.SINGLE_EMAIL
+    assert action.interaction_type.value == "Email to Student"
 
 
 def test_email_template_creation():
