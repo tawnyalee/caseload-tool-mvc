@@ -1,10 +1,11 @@
-# src/controllers/app_controller.py
 from typing import Dict, List, Optional
 import customtkinter as ctk
+import tkinter.messagebox as messagebox
 from src.models.group import Group
 from src.views.scenario_nav_panel import ScenarioNavPanel
-import tkinter.messagebox as messagebox
 from src.views.add_action_view import AddActionView
+from src.services.group_repository import GroupRepository
+
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -21,11 +22,14 @@ class PlaceholderView(ctk.CTkFrame):
 
 
 class AppController:
-    #region Initialization
+    # region Initialization
     def __init__(self) -> None:
         self.root: ctk.CTk = ctk.CTk()
         self.root.title("Caseload Management Tool")
         self.root.geometry("1100x650")
+
+        # Initialize Repository Service
+        self.group_repo = GroupRepository()
 
         # Strongly typed references
         self.groups: List[Group] = []
@@ -36,22 +40,30 @@ class AppController:
         # Keeps track of whatever active view is showing on the right
         self.current_workspace_view: Optional[ctk.CTkFrame] = None
 
-        self._load_mock_data()
+        self._load_data()
         self._init_views()
-    #endregion
+    # endregion
 
-    #region Data Loading
-    def _load_mock_data(self) -> None:
-        group_1 = Group(name="Active Cadence")
-        group_1.add_scenario("Day 3 Follow Up")
-        self.groups = [group_1]
+    # region Data Loading - loading groups and actions
+    def _load_data(self) -> None:
+        """Loads groups from JSON repository."""
+        self.groups = self.group_repo.load_groups()
+        
+        # If no groups exist yet, seed a default group so the UI isn't completely empty
+        if not self.groups:
+            default_group = self.group_repo.add_group("Active Cadence")
+            if default_group:
+                default_group.add_scenario("Day 3 Follow Up")
+                self.group_repo.save_groups([default_group])
+                self.groups = [default_group]
+
         self.scenarios_raw = {
             "Welcome Email": {"email": "Hello!", "text": ""},
             "Day 3 Follow Up": {"email": "Checking in", "text": "Hi!"},
         }
-    #endregion
+    # endregion
 
-    #region View Management
+    # region View Management
     def _init_views(self) -> None:
         # Left Side: Navigation Panel
         self.nav_panel = ScenarioNavPanel(
@@ -66,7 +78,7 @@ class AppController:
         self.right_workspace = ctk.CTkFrame(self.root, fg_color="transparent")
         self.right_workspace.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
 
-        # 🔗 Wire up the events
+        # Wire up the events
         self._wire_events()
 
         # Show the initial view on startup
@@ -79,14 +91,11 @@ class AppController:
             self.nav_panel.on_add_action_requested = self.handle_add_action_clicked
             self.nav_panel.on_edit_requested = self.handle_edit_action
             
-            # Wire up our new Run and Rename buttons!
+            # Wire up Run and Rename buttons
             self.nav_panel.on_run_requested = self.handle_run_action
             self.nav_panel.on_rename_requested = self.handle_rename_action
             
-            # Wire up our Stop Button callback
-            self.nav_panel.on_stop_requested = self.handle_stop_requested
-
-            # Wire up the Settings and Help callbacks
+            # Wire up Settings and Help callbacks
             self.nav_panel.on_settings_requested = self.handle_settings_requested
             self.nav_panel.on_help_requested = self.handle_help_requested
 
@@ -95,7 +104,7 @@ class AppController:
             self.nav_panel.on_rename_group_requested = self.handle_rename_group
             self.nav_panel.on_delete_group_requested = self.handle_delete_group
             
-            # Wire up the Action Delete button
+            # Wire up Action Delete button
             self.nav_panel.on_delete_action_requested = self.handle_delete_action
 
             # Wire up top header utility links
@@ -109,7 +118,6 @@ class AppController:
         if self.current_workspace_view is not None:
             self.current_workspace_view.destroy()
 
-        # Instantiate inside our permanent right_workspace container
         self.current_workspace_view = new_view_class(master=self.right_workspace, **kwargs)
         self.current_workspace_view.pack(fill="both", expand=True)
 
@@ -119,17 +127,20 @@ class AppController:
             PlaceholderView, 
             message="[Caseload Roster View Goes Here]"
         )
-    #endregion
+    # endregion
 
-    #region Event Handlers
+    # region Event Handlers
     def handle_edit_action(self, action_name: str) -> None:
         print(f"[Controller] Switching right panel to EDIT mode for: {action_name}")
-        
-        # Temporary test payload structured EXACTLY like AddActionView.populate_fields expects
+    
+        active_group = ""
+        if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
+            active_group = self.nav_panel.group_dropdown.get()
+
         dummy_action_data = {
             "metadata": {
                 "action_name": action_name,
-                "assigned_group": self.groups[0].name if self.groups else "",
+                "assigned_group": active_group if active_group else (self.groups[0].name if self.groups else ""),
                 "filters": [
                     {"field": "Status", "operator": "equals", "value": "Active"},
                     {"field": "Program__c", "operator": "contains", "value": "Pathway"}
@@ -166,24 +177,26 @@ class AppController:
             }
         }
         
-        # We pass controller=self directly here so AddActionView gets its reference safely!
         self.switch_workspace_view(
             AddActionView,
             controller=self,
             groups=self.groups,
+            initial_group_name=active_group,
             action_data=dummy_action_data
         )
 
     def handle_add_action_clicked(self) -> None:
         """Loads the rich form configuration panel on the right side."""
         print("[Controller] Loading Add Action Form View")
-        
-        # We switch the active workspace view to our newly created form
-        # We explicitly pass controller=self so it matches our new constructor signature!
+        active_group = ""
+        if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
+            active_group = self.nav_panel.group_dropdown.get()
+
         self.switch_workspace_view(
             AddActionView,
             controller=self,
-            groups=self.groups
+            groups=self.groups,
+            initial_group_name=active_group
         )
 
     def handle_settings_requested(self) -> None:
@@ -200,10 +213,6 @@ class AppController:
             message="❓ Help & Documentation\n\n[User Guides & Support - Logic Coming Soon]"
         )
 
-    def handle_stop_requested(self) -> None:
-        """Emergency break: Alerts and halts any active background tasks/automations."""
-        print("[Controller] ⛔ EMERGENCY STOP REQUESTED! Halting active processes...")
-
     def handle_run_action(self, action_name: str) -> None:
         print(f"[Controller] Run clicked for: {action_name}")
         self.switch_workspace_view(
@@ -214,28 +223,19 @@ class AppController:
     def handle_rename_action(self, old_name: str, new_name: str) -> None:
         """Handles the final save logic when an action is renamed inline."""
         print(f"[Controller] Action Renamed: '{old_name}' -> '{new_name}'")
-        
-        # This is where your future saving/data manipulation logic will go!
-        # e.g., self.model.rename_action(old_name, new_name)
 
     def handle_add_group(self) -> None:
         print("[Controller] Add Group clicked")
-        import customtkinter as ctk
 
-        # Dynamically find the root main window from the workspace we know exists
         main_win = self.right_workspace.winfo_toplevel()
 
-        # 1. Create the top-level pop-up window using the retrieved main window
         dialog = ctk.CTkToplevel(main_win)
         dialog.title("Group Manager")
         dialog.geometry("350x180")
-        
-        # Make the pop-up modal (keeps focus on this window until closed)
         dialog.transient(main_win)
         dialog.grab_set()
         dialog.resizable(False, False)
 
-        # 2. Window Title/Header Label
         header_lbl = ctk.CTkLabel(
             dialog, 
             text="Add New Group", 
@@ -243,20 +243,17 @@ class AppController:
         )
         header_lbl.pack(pady=(15, 10), padx=20, anchor="w")
 
-        # 3. Text Entry for Group Name
         group_name_entry = ctk.CTkEntry(
             dialog, 
             placeholder_text="Enter group name (e.g., Tier 1 Support)",
             width=310
         )
         group_name_entry.pack(pady=10, padx=20, fill="x")
-        group_name_entry.focus()  # Auto-focus the text field for quick typing
+        group_name_entry.focus()
 
-        # Button Container (for horizontal layout)
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
 
-        # 4. Cancel Button (Closes the window without doing anything)
         btn_cancel = ctk.CTkButton(
             btn_frame, 
             text="Cancel", 
@@ -268,43 +265,55 @@ class AppController:
         )
         btn_cancel.pack(side="left")
 
-        # 5. Save Button Stub (Prints to terminal for now, then closes)
-        def stub_save():
+        def save_new_group():
             entered_name = group_name_entry.get().strip()
             if entered_name:
-                print(f"[Controller Test] Save triggered for new group: '{entered_name}'")
-                # When you're ready, the database saving logic goes here!
-                dialog.destroy()
+                new_group = self.group_repo.add_group(entered_name)
+                if new_group:
+                    self.groups = self.group_repo.load_groups()
+                    
+                    if self.nav_panel:
+                        self.nav_panel.groups = self.groups
+                        
+                        group_names = ["General"] + [g.name for g in self.groups]
+                        self.nav_panel.group_dropdown.configure(values=group_names)
+                        self.nav_panel.group_dropdown.set(new_group.name)
+                        
+                        self.nav_panel._on_group_selected(new_group.name)
+
+                    dialog.destroy()
+                else:
+                    messagebox.showwarning(
+                        "Duplicate Group", 
+                        f"A group named '{entered_name}' already exists."
+                    )
             else:
-                # Turn the border red to show it's required
                 group_name_entry.configure(border_color="red")
 
         btn_save = ctk.CTkButton(
             btn_frame, 
             text="Save", 
             width=100,
-            command=stub_save
+            command=save_new_group
         )
         btn_save.pack(side="right")
 
     def handle_rename_group(self, group_name: str) -> None:
         print(f"[Controller] Rename Group clicked for: {group_name}")
-        import customtkinter as ctk
 
-        # Dynamically find the root main window from the workspace
+        if group_name == "General":
+            messagebox.showwarning("Rename Group", "The default 'General' group cannot be renamed.")
+            return
+
         main_win = self.right_workspace.winfo_toplevel()
 
-        # 1. Create the top-level pop-up window
         dialog = ctk.CTkToplevel(main_win)
         dialog.title("Group Manager")
         dialog.geometry("350x180")
-        
-        # Make the pop-up modal (keeps focus on this window until closed)
         dialog.transient(main_win)
         dialog.grab_set()
         dialog.resizable(False, False)
 
-        # 2. Window Title/Header Label
         header_lbl = ctk.CTkLabel(
             dialog, 
             text="Rename Group", 
@@ -312,24 +321,19 @@ class AppController:
         )
         header_lbl.pack(pady=(15, 10), padx=20, anchor="w")
 
-        # 3. Text Entry for Group Name
         group_name_entry = ctk.CTkEntry(
             dialog, 
-            placeholder_text="Enter group name (e.g., Tier 1 Support)",
+            placeholder_text="Enter group name",
             width=310
         )
         group_name_entry.pack(pady=10, padx=20, fill="x")
-        
-        # Pre-populate with the current group name and select it
         group_name_entry.insert(0, group_name)
-        group_name_entry.focus()  # Auto-focus the text field
-        group_name_entry.select_range(0, 'end') # Highlight the text for easy replacement
+        group_name_entry.focus()
+        group_name_entry.select_range(0, 'end')
 
-        # Button Container (for horizontal layout)
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
 
-        # 4. Cancel Button (Closes the window without doing anything)
         btn_cancel = ctk.CTkButton(
             btn_frame, 
             text="Cancel", 
@@ -341,43 +345,122 @@ class AppController:
         )
         btn_cancel.pack(side="left")
 
-        # 5. Save Button Stub (Prints both names to terminal, then closes)
-        def stub_save():
+        def save_renamed_group():
             new_name = group_name_entry.get().strip()
-            if new_name:
-                print(f"[Controller Test] Rename triggered. Old: '{group_name}' -> New: '{new_name}'")
-                # Future logic to update the data model and reload UI goes here!
+            if not new_name:
+                group_name_entry.configure(border_color="red")
+                return
+
+            if new_name == group_name:
+                dialog.destroy()
+                return
+
+            target_group = next((g for g in self.groups if g.name == group_name), None)
+            if target_group:
+                target_group.name = new_name
+                self.group_repo.save_groups(self.groups)
+
+                if self.nav_panel:
+                    self.nav_panel.groups = self.groups
+                    group_names = ["General"] + [g.name for g in self.groups]
+                    self.nav_panel.group_dropdown.configure(values=group_names)
+                    self.nav_panel.group_dropdown.set(new_name)
+                    self.nav_panel._on_group_selected(new_name)
+
                 dialog.destroy()
             else:
-                # Turn the border red to show it's required
-                group_name_entry.configure(border_color="red")
+                messagebox.showerror("Error", f"Could not find group '{group_name}' to rename.")
 
         btn_save = ctk.CTkButton(
             btn_frame, 
             text="Save", 
             width=100,
-            command=stub_save
+            command=save_renamed_group
         )
         btn_save.pack(side="right")
 
     def handle_delete_group(self, group_name: str) -> None:
-        print(f"[Controller] Delete Group clicked for: {group_name}")
-        mock_group_id = "GRP-9082"
-        # Using askokcancel for a true delete-confirmation experience
+        """Deletes a group after confirmation and updates UI state."""
+        print(f"[Controller] Delete Group requested for: {group_name}")
+
+        # Guard against deleting default/protected group
+        if group_name == "General":
+            messagebox.showwarning("Delete Group", "The default 'General' group cannot be deleted.")
+            return
+
         confirm = messagebox.askokcancel(
             "Delete Group Warning",
-            f"❌ Are you sure you want to delete this group?\n\nGroup: {group_name}\nGroup ID: {mock_group_id}\n\nThis action cannot be undone!"
+            f"❌ Are you sure you want to delete this group?\n\n"
+            f"Group: {group_name}\n\n"
+            f"This action cannot be undone!"
         )
+
         if confirm:
-            print(f"[Controller] Confirmed deletion of group: {group_name}")
+            success = self.group_repo.delete_group(group_name)
+            if success:
+                # Reload updated group data
+                self.groups = self.group_repo.load_groups()
+
+                # Refresh Navigation Dropdown and View
+                if self.nav_panel:
+                    self.nav_panel.groups = self.groups
+                    group_names = ["General"] + [g.name for g in self.groups]
+                    self.nav_panel.group_dropdown.configure(values=group_names)
+                    
+                    # Switch selected group back to 'General' safely
+                    self.nav_panel.group_dropdown.set("General")
+                    self.nav_panel._on_group_selected("General")
+
+                messagebox.showinfo("Success", f"Group '{group_name}' was successfully deleted.")
+            else:
+                messagebox.showerror("Error", f"Could not find group '{group_name}' to delete.")
+
+    def save_action(self, action_data: dict, existing_action_names_by_id: Optional[Dict[str, str]] = None) -> bool:
+        """
+        Saves action data and manages group welcome email assignment.
+        Returns True if saved successfully, False if cancelled by the user.
+        """
+        action_id = action_data.get("id")
+        group_name = action_data.get("group_name")
+        is_welcome_email = action_data.get("is_welcome_email", False)
+
+        target_group = next((g for g in self.groups if g.name == group_name), None)
+
+        if target_group:
+            current_welcome_id = target_group.welcome_action_id
+
+            if is_welcome_email:
+                if current_welcome_id and current_welcome_id != action_id:
+                    existing_name = "another action"
+                    if existing_action_names_by_id and current_welcome_id in existing_action_names_by_id:
+                        existing_name = f"'{existing_action_names_by_id[current_welcome_id]}'"
+
+                    confirm = messagebox.askyesno(
+                        "Replace Welcome Email?",
+                        f"Group '{target_group.name}' already has {existing_name} designated as its welcome email.\n\n"
+                        f"Do you want to replace it with this action?"
+                    )
+                    
+                    if not confirm:
+                        print("[Controller] Save cancelled by user.")
+                        return False
+
+                target_group.welcome_action_id = action_id
+                print(f"[Controller] Set group '{target_group.name}' welcome_action_id to '{action_id}'.")
+
+            else:
+                if current_welcome_id == action_id:
+                    target_group.welcome_action_id = None
+                    print(f"[Controller] Cleared welcome_action_id for group '{target_group.name}'.")
+
+        print(f"[Controller] Successfully saved action: {action_data.get('name')}")
+        return True
 
     def handle_delete_action(self, action_name: str) -> None:
         print(f"[Controller] Delete Action clicked for: {action_name}")
         mock_action_id = "ACT-1143"
-        confirm = messagebox.askokcancel(
-            "Delete Action Warning",
-            f"❌ Are you sure you want to delete this action?\n\nAction: {action_name}\nAction ID: {mock_action_id}\n\nThis action cannot be undone!"
-        )
+        msg = f"❌ Are you sure you want to delete this action?\n\nAction: {action_name}\nAction ID: {mock_action_id}\n\nThis action cannot be undone!"
+        confirm = messagebox.askokcancel("Delete Action Warning", msg)
         if confirm:
             print(f"[Controller] Confirmed deletion of action: {action_name}")
 
@@ -411,7 +494,7 @@ class AppController:
         )
         if confirm:
             print("[Controller] Restarting browser engine...")
-    #endregion
+    # endregion
 
     def run(self) -> None:
         self.root.mainloop()

@@ -1,0 +1,24 @@
+[
+    {
+        "name": "D370",
+        "scenarios": [
+            "Day 3 Follow Up"
+        ],
+        "welcome_action_id": null
+    },
+    {
+        "name": "D413",
+        "scenarios": [],
+        "welcome_action_id": null
+    },
+    {
+        "name": "D502",
+        "scenarios": [],
+        "welcome_action_id": null
+    },
+    {
+        "name": "C769",
+        "scenarios": [],
+        "welcome_action_id": null
+    }
+]
