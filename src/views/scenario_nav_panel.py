@@ -24,9 +24,10 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.on_rename_group_requested = None
         self.on_delete_group_requested = None
         self.on_delete_action_requested = None # Added for the ❌ action button
-        
-        self.group_names = ["General"] + [group.name for group in self.groups]
+        self.on_group_selected = None  #  fires when the group dropdown selection changes
+        self.group_names = [group.name for group in self.groups]
         self._setup_ui()
+        
     #endregion
 
     #region Layout Setup
@@ -79,6 +80,7 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.group_dropdown = ctk.CTkComboBox(self.dropdown_frame, values=self.group_names, command=self._on_group_selected)
         self.group_dropdown.pack(fill="x", expand=True)
         self.group_dropdown.set("General")
+        self.active_group_name = "General"  # last CONFIRMED group (used to revert on cancel)
 
         self.crud_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.crud_frame.pack(fill="x", padx=10, pady=(0, 10))
@@ -161,6 +163,25 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.settings_btn.pack(side="right", padx=5)
     #endregion
 
+    def refresh_data(self, groups: list[Group], scenarios_raw: dict):
+        """Updates internal state with fresh group/scenario data and re-renders the active table."""
+        self.groups = groups
+        self.scenarios_raw = scenarios_raw
+        
+        # 1. Update dropdown values list
+        self.group_names = [group.name for group in self.groups]
+        self.group_dropdown.configure(values=self.group_names)
+        
+        # 2. Preserve active selection (fallback to 'General' if selected group was deleted)
+        current_selection = self.group_dropdown.get()
+        if current_selection not in self.group_names:
+            current_selection = "General"
+            self.group_dropdown.set("General")
+            self.actions_header_label.configure(text="General - Actions")
+
+        # 3. Re-render the actions table for the selected group
+        self._render_table(current_selection)
+
     #region Live Log Logic
     def write_log_message(self, message: str):
         """Allows external classes (like the Controller) to write safe log messages."""
@@ -188,15 +209,19 @@ class ScenarioNavPanel(ctk.CTkFrame):
             widget.destroy()
                 
         actions_to_show = []
+        matched_group = next((g for g in self.groups if g.name == group_name), None)
+        if matched_group:
+            actions_to_show = list(matched_group.scenarios)
+
+        # Fallback: catch any legacy actions saved before General was a real group
         if group_name == "General":
             assigned_actions = set()
             for g in self.groups:
                 assigned_actions.update(g.scenarios)
-            actions_to_show = [name for name in self.scenarios_raw.keys() if name not in assigned_actions]
-        else:
-            matched_group = next((g for g in self.groups if g.name == group_name), None)
-            if matched_group:
-                actions_to_show = matched_group.scenarios
+            legacy_orphans = [name for name in self.scenarios_raw.keys() if name not in assigned_actions]
+            for name in legacy_orphans:
+                if name not in actions_to_show:
+                    actions_to_show.append(name)
 
         for row_idx, action_name in enumerate(actions_to_show):
             # 1. Keep track of the label object
@@ -228,40 +253,36 @@ class ScenarioNavPanel(ctk.CTkFrame):
 
     def _start_inline_rename(self, old_name: str, name_label, row_index: int, col_index: int):
         """Swaps the label with an Entry box in the grid for inline renaming."""
-        # 1. Temporarily remove the static label from the layout
         name_label.grid_forget()
 
-        # 2. Create the Entry widget in the exact same grid slot
         edit_entry = ctk.CTkEntry(self.table_frame, height=28)
         edit_entry.grid(row=row_index, column=col_index, padx=(10, 20), pady=5, sticky="ew")
         
-        # Pre-populate and highlight the text
         edit_entry.insert(0, old_name)
         edit_entry.focus()
         edit_entry.select_range(0, 'end')
 
-        # 3. Define the save helper function
         def save_inline_change(event=None):
-            # Guard against double-triggering (e.g., hitting Enter and losing focus simultaneously)
             if not edit_entry.winfo_exists():
                 return
 
             new_name = edit_entry.get().strip()
             
-            # If they entered a valid name and it actually changed
+            # Unbind to prevent double-firing on destroy/focus loss
+            edit_entry.unbind("<Return>")
+            edit_entry.unbind("<FocusOut>")
+
             if new_name and new_name != old_name:
-                # Update the label visually right away
-                name_label.configure(text=new_name)
-                
-                # Tell our controller that a rename was requested!
                 if self.on_rename_requested:
                     self.on_rename_requested(old_name, new_name)
-            
-            # Clean up: destroy the entry widget and bring the label back to the screen
-            edit_entry.destroy()
-            name_label.grid(row=row_index, column=col_index, padx=(10, 20), pady=5, sticky="ew")
+            else:
+                # If name didn't change, manually restore entry/label without controller refresh
+                if edit_entry.winfo_exists():
+                    edit_entry.destroy()
+                if name_label.winfo_exists():
+                    name_label.grid(row=row_index, column=col_index, padx=(10, 20), pady=5, sticky="ew")
 
-        # 4. Bind Enter (Return) key and clicking away (FocusOut) to save the changes
+        # Bind events so pressing Enter or clicking away submits the rename
         edit_entry.bind("<Return>", save_inline_change)
         edit_entry.bind("<FocusOut>", save_inline_change)
     #endregion
@@ -294,6 +315,18 @@ class ScenarioNavPanel(ctk.CTkFrame):
     def _on_group_selected(self, selected_group_name: str):
         self.actions_header_label.configure(text=f"{selected_group_name} - Actions")
         self._render_table(selected_group_name)
+        if self.on_group_selected:
+            self.on_group_selected(selected_group_name)
+
+    def confirm_group_change(self, group_name: str):
+        """Called by the controller once a group switch is accepted (or didn't need confirming)."""
+        self.active_group_name = group_name
+
+    def revert_to_previous_group(self):
+        """Called by the controller when the user cancels a group switch — restores prior state."""
+        self.group_dropdown.set(self.active_group_name)
+        self.actions_header_label.configure(text=f"{self.active_group_name} - Actions")
+        self._render_table(self.active_group_name)
 
     def _add_group(self):
         if self.on_add_group_requested:

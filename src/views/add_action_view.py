@@ -1,6 +1,7 @@
 # src/views/add_action_view.py
 import customtkinter as ctk
-from src.views.template_editor_modal import TemplateEditorModal
+from src.views.template_editor_webview import open_template_editor
+import tkinter.messagebox as messagebox
 
 class AddActionView(ctk.CTkFrame):
     def __init__(self, master=None, parent=None, controller=None, groups=None, initial_group_name="", action_data=None, **kwargs):
@@ -18,6 +19,7 @@ class AddActionView(ctk.CTkFrame):
         
         # Load existing templates map from controller if available
         self.template_repo = getattr(controller, "template_repo", None)
+        self.template_map = {}  # display name -> template id, rebuilt whenever the list changes
 
         # Determine header title based on mode
         self.mode_title = "Edit Action" if self.action_data else "Add New Action"
@@ -143,6 +145,7 @@ class AddActionView(ctk.CTkFrame):
             border_color=("gray70", "gray30")
         )
         self._build_email_ui()
+        self._refresh_template_dropdown()
 
         self.text_container = ctk.CTkFrame(
             self.scrollable_container, 
@@ -206,96 +209,197 @@ class AddActionView(ctk.CTkFrame):
 
     # =========================================================================
     # DATA LOADING & POPULATION
-    # =========================================================================
     def populate_fields(self, data: dict) -> None:
-        """Populates form values when editing an existing Action."""
+        """Populates form values when editing an existing Action and auto-expands sections."""
         if not data:
             return
 
         # 1. Action Name
-        if "name" in data:
+        name_val = data.get("name") or (data.get("metadata", {}).get("action_name", ""))
+        if name_val:
             self.name_entry.delete(0, "end")
-            self.name_entry.insert(0, data["name"])
-        elif "metadata" in data and "action_name" in data["metadata"]:
-            self.name_entry.delete(0, "end")
-            self.name_entry.insert(0, data["metadata"]["action_name"])
+            self.name_entry.insert(0, name_val)
 
-        # 2. Group Name Selection
-        group_to_select = data.get("group_name")
-        if not group_to_select and "metadata" in data:
-            group_to_select = data["metadata"].get("assigned_group")
-
-        if group_to_select and group_to_select in self.group_names:
-            self.group_dropdown.set(group_to_select)
+        # 5. Populate Welcome Email Checkbox State
+        is_welcome = False
+        action_group_id = data.get("group_id")
+        action_id = data.get("id")
+        if action_group_id and action_id:
+            matched_group = next((g for g in self.groups if g.id == action_group_id), None)
+            if matched_group and matched_group.welcome_action_id == action_id:
+                is_welcome = True
+        self.is_welcome_email_var.set("on" if is_welcome else "off")
 
         # 3. Action ID
         if "id" in data:
-            self.id_display.configure(text=data["id"])
+            self.id_display.configure(text=str(data["id"]))
 
-        # 4. Email Channel Setup
-        email_config = data.get("email_config", {})
-        if email_config or data.get("send_email"):
+        # 4. Email Channel Setup & Auto-Expand
+        email_config = data.get("email_config") or {
+            "subject": data.get("email_subject", ""),
+            "template_name": data.get("template_id", ""),
+            "signature": data.get("email_signature", "")
+        }
+        
+        has_email_data = bool(
+            email_config.get("subject") or 
+            email_config.get("template_name") or 
+            email_config.get("body_template_selected")
+        )
+        
+        # Check all possible email active flags (boolean True or string "on")
+        should_send_email = (
+            data.get("send_email") is True or 
+            data.get("is_email") is True or 
+            data.get("send_email") == "on" or 
+            data.get("is_email") == "on" or 
+            has_email_data
+        )
+
+        if should_send_email:
             self.send_email_var.set("on")
-            self._toggle_email_section()
-            
-            if "subject" in email_config:
+            self._toggle_email_section()  # Now send_email_var is guaranteed "on"
+            self.update_idletasks()
+                
+            if "subject" in email_config and email_config["subject"]:
                 self.email_subject.delete(0, "end")
                 self.email_subject.insert(0, email_config["subject"])
 
-            template_name = email_config.get("template_name") or email_config.get("body_template_selected")
-            if template_name:
-                current_values = list(self.email_body_dropdown.cget("values"))
-                if template_name not in current_values:
-                    current_values.append(template_name)
-                    self.email_body_dropdown.configure(values=current_values)
-                
-                self.email_body_dropdown.set(template_name)
+            template_id = data.get("template_id")
+            if template_id:
+                self._refresh_template_dropdown(select_id=template_id)
 
-        # 5. Text Channel Setup
-        text_config = data.get("text_config", {})
-        if text_config or data.get("send_text"):
+            if "signature" in email_config and email_config["signature"]:
+                self.email_signature_dropdown.set(email_config["signature"])
+        else:
+            self.send_email_var.set("off")
+            self._toggle_email_section()
+
+        # 5. Populate Welcome Email Checkbox State
+        is_welcome = False
+        action_group_id = data.get("group_id")
+        action_id = data.get("id")
+        if action_group_id and action_id:
+            matched_group = next((g for g in self.groups if g.id == action_group_id), None)
+            if matched_group and matched_group.welcome_action_id == action_id:
+                is_welcome = True
+        self.is_welcome_email_var.set("on" if is_welcome else "off")
+
+        # 6. Text Channel Setup & Auto-Expand
+        text_config = data.get("text_config") or {
+            "subject": data.get("text_subject", ""),
+            "body": data.get("text_body", "")
+        }
+        
+        has_text_data = bool(text_config.get("subject") or text_config.get("body"))
+        
+        should_send_text = (
+            data.get("send_text") is True or 
+            data.get("is_text") is True or 
+            data.get("send_text") == "on" or 
+            data.get("is_text") == "on" or 
+            has_text_data
+        )
+
+        if should_send_text:
             self.send_text_var.set("on")
-            self._toggle_text_section()
-            if "subject" in text_config:
+            self._toggle_text_section()  # Now send_text_var is guaranteed "on"
+            self.update_idletasks()
+                
+            if "subject" in text_config and text_config["subject"]:
                 self.text_subject.delete(0, "end")
                 self.text_subject.insert(0, text_config["subject"])
-            if "body" in text_config:
-                self.text_body.delete("1.0", "end")
-                self.text_body.insert("1.0", text_config["body"])
+                
+            if "body" in text_config and text_config["body"]:
+                self.text_body.delete("0.0", "end")
+                self.text_body.insert("0.0", text_config["body"])
+        else:
+            self.send_text_var.set("off")
+            self._toggle_text_section()
 
-        # 6. Salesforce Note Setup
-        note_config = data.get("note_config") or data.get("salesforce_note_config", {})
+        # 7. Salesforce Note Setup
+        note_config = data.get("note_config") or data.get("salesforce_note_config") or {
+            "subject": data.get("note_subject", ""),
+            "body": data.get("note_body", ""),
+            "interaction_type": data.get("interaction_type", "Email"),
+            "followup_note": data.get("follow_up_note", "")
+        }
+        
         if note_config or data.get("create_note"):
-            if "subject" in note_config:
+            if "subject" in note_config and note_config["subject"]:
                 self.note_subject.delete(0, "end")
                 self.note_subject.insert(0, note_config["subject"])
-            if "body" in note_config or "note_body" in note_config:
-                body_val = note_config.get("body") or note_config.get("note_body", "")
-                self.note_body.delete("1.0", "end")
-                self.note_body.insert("1.0", body_val)
+                
+            body_val = note_config.get("body") or note_config.get("note_body", "")
+            if body_val:
+                self.note_body.delete("0.0", "end")
+                self.note_body.insert("0.0", body_val)
+                
+            if "interaction_type" in note_config and note_config["interaction_type"]:
+                raw_interaction_type = note_config["interaction_type"]
+                interaction_type_str = (
+                    raw_interaction_type.value
+                    if hasattr(raw_interaction_type, "value")
+                        else raw_interaction_type
+                    )
+                self.interaction_type_var.set(interaction_type_str)
+                    
+            if "followup_note" in note_config and note_config["followup_note"]:
+                self.followup_note.delete(0, "end")
+                self.followup_note.insert(0, note_config["followup_note"])
 
     def get_action_data(self) -> dict:
-        """Gathers all current form field values into a dictionary."""
+        """Gathers all current form field values into a dictionary compatible with both View and Controller schemas."""
         return {
-            "id": self.id_display.cget("text"),
-            "name": self.name_entry.get(),
+            # --- Metadata ---
+            "id": self.action_data.get("id") if self.action_data else None,
+            "name": self.name_entry.get().strip(),
             "group_name": self.group_dropdown.get(),
+            "is_welcome_email": self.is_welcome_email_var.get() == "on",
+
+            # --- Channel Toggles ---
             "send_email": self.send_email_var.get() == "on",
+            "is_email": self.send_email_var.get() == "on",
+            "send_text": self.send_text_var.get() == "on",
+            "is_text": self.send_text_var.get() == "on",
+
+            # --- Flat Keys for app_controller.py ---
+            "email_subject": self.email_subject.get(),
+            "template_id": self.template_map.get(self.email_body_dropdown.get()),
+            "email_signature": self.email_signature_dropdown.get(),
+            "text_subject": self.text_subject.get(),
+            "text_body": self.text_body.get("0.0", "end-1c"),  # "0.0" starting index for CustomTkinter
+            "note_subject": self.note_subject.get(),
+            "note_body": self.note_body.get("0.0", "end-1c"),  # "0.0" starting index for CustomTkinter
+            "follow_up_note": self.followup_note.get(),
+            "interaction_type": self.interaction_type_var.get(),
+
+            # --- Nested Configs for View Re-population ---
             "email_config": {
                 "subject": self.email_subject.get(),
-                "template_name": self.email_body_dropdown.get(),
+                "template_name": self.email_body_dropdown.get(),  # display only — template_id above is canonical
+                "signature": self.email_signature_dropdown.get()
             },
-            "send_text": self.send_text_var.get() == "on",
             "text_config": {
                 "subject": self.text_subject.get(),
-                "body": self.text_body.get("1.0", "end-1c")
+                "body": self.text_body.get("0.0", "end-1c")
             },
             "note_config": {
                 "subject": self.note_subject.get(),
-                "body": self.note_body.get("1.0", "end-1c"),
+                "body": self.note_body.get("0.0", "end-1c"),
                 "interaction_type": self.interaction_type_var.get(),
                 "followup_note": self.followup_note.get()
-            }
+            },
+
+            # --- Dynamic Filters ---
+            "filters": [
+                {
+                    "field": r["field"].get(),
+                    "operator": r["operator"].get(),
+                    "value": r["value"].get()
+                }
+                for r in self.filter_rows
+            ]
         }
 
     # =========================================================================
@@ -351,6 +455,35 @@ class AddActionView(ctk.CTkFrame):
         else:
             self.text_container.pack_forget()
 
+    def _refresh_template_dropdown(self, select_id: str = None):
+        """Rebuilds the template dropdown values and name->id map from the repository."""
+        self.template_map = {}
+        values = ["New / Custom Template"]
+        if self.template_repo:
+            for t in self.template_repo.load_all():
+                values.append(t.name)
+                self.template_map[t.name] = t.id
+        self.email_body_dropdown.configure(values=values)
+
+        if select_id:
+            selected_name = next((name for name, tid in self.template_map.items() if tid == select_id), "New / Custom Template")
+            self.email_body_dropdown.set(selected_name)
+        else:
+            self.email_body_dropdown.set("New / Custom Template")
+
+        self._update_delete_template_button_state()
+
+    def _on_template_dropdown_changed(self, selected_name: str):
+        self._update_delete_template_button_state()
+
+    def _update_delete_template_button_state(self):
+        """Enables the delete button only when an existing (non-new) template is selected."""
+        selected_name = self.email_body_dropdown.get()
+        if selected_name in self.template_map:
+            self.btn_delete_template.configure(state="normal")
+        else:
+            self.btn_delete_template.configure(state="disabled")
+
     def _build_email_ui(self):
         lbl = ctk.CTkLabel(self.email_container, text="✉️ Email Details", font=ctk.CTkFont(weight="bold"))
         lbl.pack(anchor="w", padx=10, pady=5)
@@ -376,7 +509,7 @@ class AddActionView(ctk.CTkFrame):
         template_row = ctk.CTkFrame(self.email_container, fg_color="transparent")
         template_row.pack(anchor="w", padx=10, pady=(2, 10))
 
-        self.email_body_dropdown = ctk.CTkComboBox(template_row, values=["New / Custom Template"], width=220)
+        self.email_body_dropdown = ctk.CTkComboBox(template_row, values=["New / Custom Template"], width=220, command=self._on_template_dropdown_changed)
         self.email_body_dropdown.pack(side="left", padx=(0, 5))
 
         self.btn_new_template = ctk.CTkButton(template_row, text="➕ New", width=60, command=self._on_new_template_click)
@@ -421,67 +554,73 @@ class AddActionView(ctk.CTkFrame):
     # =========================================================================
     def _on_save_clicked(self):
         """Callback executed when the save button is clicked."""
-        import json
         form_data = self.get_action_data()
-        json_output = json.dumps(form_data, indent=4)
+        
+        if self.controller and hasattr(self.controller, "save_action"):
+            success = self.controller.save_action(form_data)
+            if success:
+                print("[View] Action saved successfully through Controller.")
+        else:
+            print("[View] Error: No controller attached to handle save_action.")
 
     def _on_new_template_click(self):
         """Opens the template editor dialog for creating a new template."""
-        TemplateEditorModal(
-            master=self,
+        open_template_editor(
+            template_id=None,
             on_save_callback=self._handle_template_saved
         )
 
     def _on_edit_template_click(self):
         """Opens the template editor dialog for the selected template."""
         selected_name = self.email_body_dropdown.get()
-        
-        if not selected_name or selected_name == "New / Custom Template":
+        template_id = self.template_map.get(selected_name)
+
+        if not template_id:
             self._on_new_template_click()
             return
 
         body_content = ""
-
-        if self.template_repo and hasattr(self.template_repo, "get_template_by_name"):
-            template_obj = self.template_repo.get_template_by_name(selected_name)
+        if self.template_repo:
+            template_obj = self.template_repo.get_by_id(template_id)
             if template_obj:
-                body_content = getattr(template_obj, "body", "")
+                body_content = template_obj.body
 
-        if not body_content and self.action_data:
-            email_cfg = self.action_data.get("email_config", {})
-            body_content = email_cfg.get("body", "")
-
-        TemplateEditorModal(
-            master=self,
+        open_template_editor(
+            template_id=template_id,
             template_name=selected_name,
             template_body=body_content,
             on_save_callback=self._handle_template_saved
         )
 
     def _on_delete_template_click(self):
-        """Deletes the selected template from repository and dropdown."""
+        """Deletes the selected template after confirmation."""
         selected_name = self.email_body_dropdown.get()
-        if not selected_name or selected_name == "New / Custom Template":
+        template_id = self.template_map.get(selected_name)
+        if not template_id:
             return
 
-        if self.template_repo and hasattr(self.template_repo, "delete_template"):
-            self.template_repo.delete_template(selected_name)
+        confirm = messagebox.askokcancel(
+            "Delete Template",
+            f"❌ Are you sure you want to delete this template?\n\n"
+            f"Template: {selected_name}\n\n"
+            f"This action cannot be undone!"
+        )
+        if not confirm:
+            return
 
-        current_values = list(self.email_body_dropdown.cget("values"))
-        if selected_name in current_values:
-            current_values.remove(selected_name)
-            self.email_body_dropdown.configure(values=current_values)
+        if self.template_repo:
+            self.template_repo.delete(template_id)
 
-        self.email_body_dropdown.set("New / Custom Template")
+        self._refresh_template_dropdown()
 
-    def _handle_template_saved(self, name: str, body: str):
-        """Callback executed when a template is saved inside the editor."""
-        if self.template_repo and hasattr(self.template_repo, "save_template"):
-            self.template_repo.save_template(name, body)
+    def _handle_template_saved(self, template_id, name, body):
+        """Callback executed when a template is saved inside the editor.
+        Runs on the pywebview background thread, so UI updates are marshaled
+        back onto the main Tkinter thread via .after()."""
+        def _apply():
+            saved_id = None
+            if self.controller and hasattr(self.controller, "save_template"):
+                saved_id = self.controller.save_template(template_id, name, body)
+            self._refresh_template_dropdown(select_id=saved_id)
 
-        current_values = list(self.email_body_dropdown.cget("values"))
-        if name not in current_values:
-            current_values.append(name)
-            self.email_body_dropdown.configure(values=current_values)
-
-        self.email_body_dropdown.set(name)
+        self.after(0, _apply)

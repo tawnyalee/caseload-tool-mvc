@@ -5,7 +5,10 @@ from src.models.group import Group
 from src.views.scenario_nav_panel import ScenarioNavPanel
 from src.views.add_action_view import AddActionView
 from src.services.group_repository import GroupRepository
-
+from src.services.action_repository import ActionRepository
+from src.models.enums import InteractionType
+from src.services.template_repository import TemplateRepository
+from src.models.email_template import EmailTemplate
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -29,7 +32,10 @@ class AppController:
         self.root.geometry("1100x650")
 
         # Initialize Repository Service
+        # Initialize Repository Services
         self.group_repo = GroupRepository()
+        self.action_repo = ActionRepository()
+        self.template_repo = TemplateRepository()
 
         # Strongly typed references
         self.groups: List[Group] = []
@@ -44,23 +50,34 @@ class AppController:
         self._init_views()
     # endregion
 
+    def _reload_scenarios_dict(self) -> None:
+        """Helper to reload actions from repository and convert list -> dict keyed by name."""
+        if hasattr(self.action_repo, "load_actions"):
+            actions_list = self.action_repo.load_actions()
+            if isinstance(actions_list, list):
+                self.scenarios_raw = {
+                    (getattr(a, "name", None) or a.get("name")): a 
+                    for a in actions_list 
+                    if getattr(a, "name", None) or (isinstance(a, dict) and a.get("name"))
+                }
+            elif isinstance(actions_list, dict):
+                self.scenarios_raw = actions_list
+        else:
+            self.scenarios_raw = {}
+
     # region Data Loading - loading groups and actions
     def _load_data(self) -> None:
-        """Loads groups from JSON repository."""
+        """Loads groups and actions from JSON repositories."""
         self.groups = self.group_repo.load_groups()
-        
-        # If no groups exist yet, seed a default group so the UI isn't completely empty
-        if not self.groups:
-            default_group = self.group_repo.add_group("Active Cadence")
-            if default_group:
-                default_group.add_scenario("Day 3 Follow Up")
-                self.group_repo.save_groups([default_group])
-                self.groups = [default_group]
 
-        self.scenarios_raw = {
-            "Welcome Email": {"email": "Hello!", "text": ""},
-            "Day 3 Follow Up": {"email": "Checking in", "text": "Hi!"},
-        }
+        # Guarantee a real, persisted "General" group always exists
+        if not any(g.name == "General" for g in self.groups):
+            general_group = self.group_repo.add_group("General")
+            if general_group:
+                self.groups.append(general_group)
+
+        # Use helper to populate self.scenarios_raw as a Dictionary
+        self._reload_scenarios_dict()
     # endregion
 
     # region View Management
@@ -103,6 +120,7 @@ class AppController:
             self.nav_panel.on_add_group_requested = self.handle_add_group
             self.nav_panel.on_rename_group_requested = self.handle_rename_group
             self.nav_panel.on_delete_group_requested = self.handle_delete_group
+            self.nav_panel.on_group_selected = self.handle_group_selected
             
             # Wire up Action Delete button
             self.nav_panel.on_delete_action_requested = self.handle_delete_action
@@ -127,6 +145,30 @@ class AppController:
             PlaceholderView, 
             message="[Caseload Roster View Goes Here]"
         )
+
+    def handle_group_selected(self, group_name: str) -> None:
+        """Clears the right-hand workspace when the group changes, confirming first if an
+        open AddActionView would lose unsaved changes."""
+        print(f"[Controller] Group selected: {group_name}")
+
+        if isinstance(self.current_workspace_view, AddActionView):
+            confirm = messagebox.askyesno(
+                "Switch Group?",
+                f"Switching to '{group_name}' will discard unsaved changes to this action.\n\n"
+                f"Continue?"
+            )
+            if not confirm:
+                if self.nav_panel:
+                    self.nav_panel.revert_to_previous_group()
+                return
+
+        if self.nav_panel:
+            self.nav_panel.confirm_group_change(group_name)
+
+        self.switch_workspace_view(
+            PlaceholderView,
+            message=f"Group {group_name} is now selected. \nPlease select an action to work with."
+        )
     # endregion
 
     # region Event Handlers
@@ -137,52 +179,23 @@ class AppController:
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
 
-        dummy_action_data = {
-            "metadata": {
-                "action_name": action_name,
-                "assigned_group": active_group if active_group else (self.groups[0].name if self.groups else ""),
-                "filters": [
-                    {"field": "Status", "operator": "equals", "value": "Active"},
-                    {"field": "Program__c", "operator": "contains", "value": "Pathway"}
-                ]
-            },
-            "channels_enabled": {
-                "email": True,
-                "text": True,
-                "note": True
-            },
-            "email_config": {
-                "subject": "Welcome to the Program! Your Day 3 Check-In",
-                "body_template_selected": "Day 3 Welcome Email",
-                "signature": "Professional Signature",
-                "cc_mentor": True
-            },
-            "text_config": {
-                "subject": "Day 3 SMS Check-in",
-                "body": "Hey there! Just checking in on your Day 3 progress."
-            },
-            "salesforce_note_config": {
-                "category": "single",
-                "interaction_type": "Live Call",
-                "followup_note": "Scheduled followup call for next Monday.",
-                "subject": "Initial Live Discussion Note",
-                "note_body": "Had a great discussion with student about course info and goals.",
-                "live_call_checklist": {
-                    "info_discussed": True,
-                    "info_requested": False,
-                    "goals_set": True,
-                    "learning_occurred": True,
-                    "obstacles_covered": False
-                }
-            }
-        }
-        
+        # 1. Fetch real action data from scenarios_raw
+        real_action_data = self.scenarios_raw.get(action_name, {})
+
+        # 2. Convert model object to dictionary if necessary
+        if hasattr(real_action_data, "__dict__"):
+            real_action_data = real_action_data.__dict__
+
+        #debug printout
+        print(real_action_data)
+
+        # 3. Load the workspace view with real action data
         self.switch_workspace_view(
             AddActionView,
             controller=self,
             groups=self.groups,
             initial_group_name=active_group,
-            action_data=dummy_action_data
+            action_data=real_action_data
         )
 
     def handle_add_action_clicked(self) -> None:
@@ -223,6 +236,36 @@ class AppController:
     def handle_rename_action(self, old_name: str, new_name: str) -> None:
         """Handles the final save logic when an action is renamed inline."""
         print(f"[Controller] Action Renamed: '{old_name}' -> '{new_name}'")
+
+        if not new_name or old_name == new_name:
+            return
+
+        # 1. Update memory state for scenarios_raw
+        if old_name in self.scenarios_raw:
+            action_data = self.scenarios_raw.pop(old_name)
+            if isinstance(action_data, dict):
+                action_data["name"] = new_name
+            elif hasattr(action_data, "name"):
+                action_data.name = new_name
+            self.scenarios_raw[new_name] = action_data
+
+        # 2. Update group scenario lists
+        for group in self.groups:
+            if hasattr(group, "scenarios") and old_name in group.scenarios:
+                idx = group.scenarios.index(old_name)
+                group.scenarios[idx] = new_name
+
+        self.group_repo.save_groups(self.groups)
+
+        # 3. Persist via ActionRepository
+        if hasattr(self.action_repo, "rename_action"):
+            self.action_repo.rename_action(old_name, new_name)
+        elif hasattr(self.action_repo, "save_scenarios"):
+            self.action_repo.save_scenarios(self.scenarios_raw)
+
+        # 4. Refresh UI State safely
+        if self.nav_panel:
+            self.nav_panel.refresh_data(self.groups, self.scenarios_raw)
 
     def handle_add_group(self) -> None:
         print("[Controller] Add Group clicked")
@@ -275,7 +318,7 @@ class AppController:
                     if self.nav_panel:
                         self.nav_panel.groups = self.groups
                         
-                        group_names = ["General"] + [g.name for g in self.groups]
+                        group_names = [g.name for g in self.groups]
                         self.nav_panel.group_dropdown.configure(values=group_names)
                         self.nav_panel.group_dropdown.set(new_group.name)
                         
@@ -362,7 +405,7 @@ class AppController:
 
                 if self.nav_panel:
                     self.nav_panel.groups = self.groups
-                    group_names = ["General"] + [g.name for g in self.groups]
+                    group_names = [g.name for g in self.groups]
                     self.nav_panel.group_dropdown.configure(values=group_names)
                     self.nav_panel.group_dropdown.set(new_name)
                     self.nav_panel._on_group_selected(new_name)
@@ -404,7 +447,7 @@ class AppController:
                 # Refresh Navigation Dropdown and View
                 if self.nav_panel:
                     self.nav_panel.groups = self.groups
-                    group_names = ["General"] + [g.name for g in self.groups]
+                    group_names = [g.name for g in self.groups]
                     self.nav_panel.group_dropdown.configure(values=group_names)
                     
                     # Switch selected group back to 'General' safely
@@ -417,17 +460,31 @@ class AppController:
 
     def save_action(self, action_data: dict, existing_action_names_by_id: Optional[Dict[str, str]] = None) -> bool:
         """
-        Saves action data and manages group welcome email assignment.
+        Saves action data into JSON storage and manages group welcome email assignment.
         Returns True if saved successfully, False if cancelled by the user.
         """
+        from src.models.action import Action
+
         action_id = action_data.get("id")
+        action_name = action_data.get("name", "").strip()
         group_name = action_data.get("group_name")
         is_welcome_email = action_data.get("is_welcome_email", False)
 
+        if not action_name:
+            messagebox.showwarning("Validation Error", "Action name cannot be empty.")
+            return False
+
+        # 1. Manage Group Welcome Email Conflicts & Scenario Linking
         target_group = next((g for g in self.groups if g.name == group_name), None)
 
         if target_group:
+            # Link action name to group scenarios list for UI rendering
+            if action_name not in target_group.scenarios:
+                target_group.scenarios.append(action_name)
+
             current_welcome_id = target_group.welcome_action_id
+            print(f"[DEBUG] target_group={target_group.name}, current_welcome_id={current_welcome_id}, action_id={action_id}, is_welcome_email={is_welcome_email}")
+
 
             if is_welcome_email:
                 if current_welcome_id and current_welcome_id != action_id:
@@ -453,16 +510,145 @@ class AppController:
                     target_group.welcome_action_id = None
                     print(f"[Controller] Cleared welcome_action_id for group '{target_group.name}'.")
 
-        print(f"[Controller] Successfully saved action: {action_data.get('name')}")
+        # Save updated group so scenarios list persists
+        self.group_repo.save_groups(self.groups)
+
+        # 2. Build or Update the Action Model
+        action_to_save = Action(
+            action_id=action_id,
+            name=action_name,
+            group_id=target_group.id if target_group else "",
+            filters=action_data.get("filters", []),
+            is_email=action_data.get("is_email", False),
+            is_text=action_data.get("is_text", False),
+            template_id=action_data.get("template_id"),
+            email_subject=action_data.get("email_subject", ""),
+            email_signature=action_data.get("email_signature", ""),
+            text_subject=action_data.get("text_subject", ""),
+            text_body=action_data.get("text_body", ""),
+            note_subject=action_data.get("note_subject", ""),
+            note_body=action_data.get("note_body", ""),
+            follow_up_note=action_data.get("follow_up_note", ""),
+            interaction_type=(
+                InteractionType(action_data.get("interaction_type"))
+                if action_data.get("interaction_type")
+                else None
+            ),
+        )
+
+        # 3. Persist via ActionRepository
+        self.action_repo.save_action(action_to_save)
+
+        # 4. Refresh UI State & Keep Active Selection
+        self.groups = self.group_repo.load_groups()
+        self._reload_scenarios_dict()
+
+        if self.nav_panel:
+            active_group = self.nav_panel.group_dropdown.get()
+            self.nav_panel.groups = self.groups
+            self.nav_panel.scenarios_raw = self.scenarios_raw
+            self.nav_panel._on_group_selected(active_group)
+
+        print(f"[Controller] Successfully saved action: {action_name}")
+        messagebox.showinfo("Success", "Action saved successfully!")
         return True
 
+    def save_template(self, template_id: Optional[str], name: str, body: str) -> str:
+        """
+        Saves a template. If template_id is provided and the content changed from
+        what's stored, asks the user whether to update it in place or save as a
+        new template. Returns the id of the template that was actually saved.
+        """
+        existing = self.template_repo.get_by_id(template_id) if template_id else None
+
+        if existing and existing.body == body and existing.name == name:
+            # Nothing changed — no need to prompt, just confirm it's saved as-is.
+            return existing.id
+
+        if existing:
+            update_in_place = messagebox.askyesno(
+                "Update or Save as New?",
+                f"You've modified '{existing.name}'.\n\n"
+                f"Click Yes to update this template for everyone using it, "
+                f"or No to save your changes as a brand new template instead."
+            )
+            if update_in_place:
+                existing.name = name
+                existing.body = body
+                self.template_repo.save(existing)
+                return existing.id
+            else:
+                new_template = EmailTemplate(name=name, body=body)
+                self.template_repo.save(new_template)
+                return new_template.id
+
+        # No existing template — straightforward create
+        new_template = EmailTemplate(name=name, body=body)
+        self.template_repo.save(new_template)
+        return new_template.id
+
     def handle_delete_action(self, action_name: str) -> None:
-        print(f"[Controller] Delete Action clicked for: {action_name}")
-        mock_action_id = "ACT-1143"
-        msg = f"❌ Are you sure you want to delete this action?\n\nAction: {action_name}\nAction ID: {mock_action_id}\n\nThis action cannot be undone!"
+        """Deletes an action after user confirmation and updates the UI."""
+        print(f"[Controller] Delete Action clicked for: '{action_name}'")
+
+        # 1. Fetch action objects list or dict
+        actions = self.action_repo.load_actions()
+        target_action = None
+
+        if isinstance(actions, list):
+            target_action = next((a for a in actions if getattr(a, "name", None) == action_name), None)
+        elif isinstance(actions, dict):
+            target_action = actions.get(action_name)
+
+        # 2. Fallback check if not found directly in repo output
+        action_id = None
+        target_name = action_name
+
+        if target_action:
+            action_id = getattr(target_action, "id", None)
+            target_name = getattr(target_action, "name", action_name)
+        else:
+            if isinstance(self.scenarios_raw, dict) and action_name in self.scenarios_raw:
+                raw_item = self.scenarios_raw[action_name]
+                action_id = getattr(raw_item, "id", None) if not isinstance(raw_item, dict) else raw_item.get("id")
+            else:
+                messagebox.showerror("Error", f"Could not find action '{action_name}' to delete.")
+                return
+
+        msg = (
+            f"❌ Are you sure you want to delete this action?\n\n"
+            f"Action: {target_name}\n"
+            f"Action ID: {action_id if action_id else 'N/A'}\n\n"
+            f"This action cannot be undone!"
+        )
+
         confirm = messagebox.askokcancel("Delete Action Warning", msg)
         if confirm:
-            print(f"[Controller] Confirmed deletion of action: {action_name}")
+            # 1. Delete action from repo using ID or name
+            delete_key = action_id if action_id else action_name
+            if hasattr(self.action_repo, "delete_action"):
+                self.action_repo.delete_action(delete_key)
+
+            # 2. Clear welcome email association if present
+            if action_id and hasattr(self.group_repo, "clear_welcome_action_id"):
+                self.group_repo.clear_welcome_action_id(action_id)
+
+            # 3. Remove action name from group scenarios
+            for group in self.groups:
+                if hasattr(group, "scenarios") and action_name in group.scenarios:
+                    group.scenarios.remove(action_name)
+            if hasattr(self.group_repo, "save_groups"):
+                self.group_repo.save_groups(self.groups)
+
+            # 4. Reload state & refresh UI safely
+            self.groups = self.group_repo.load_groups()
+            self._reload_scenarios_dict()
+
+            if self.nav_panel:
+                self.nav_panel.refresh_data(self.groups, self.scenarios_raw)
+
+            print(f"[Controller] Successfully deleted action: {target_name}")
+            messagebox.showinfo("Success", f"Action '{target_name}' was successfully deleted.")
 
     def handle_stop_requested(self) -> None:
         """Emergency break: Alerts and halts active processes."""

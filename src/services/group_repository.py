@@ -29,7 +29,8 @@ class GroupRepository:
                     Group(
                         name=item["name"],
                         scenarios=item.get("scenarios", []),
-                        welcome_action_id=item.get("welcome_action_id")
+                        welcome_action_id=item.get("welcome_action_id"),
+                        group_id=item.get("id")
                     )
                     for item in raw_data
                 ]
@@ -40,6 +41,7 @@ class GroupRepository:
         """Saves a list of Group objects to src/data/groups.json."""
         serialized = [
             {
+                "id": g.id,
                 "name": g.name,
                 "scenarios": g.scenarios,
                 "welcome_action_id": g.welcome_action_id
@@ -75,3 +77,18 @@ class GroupRepository:
             
         self.save_groups(updated_groups)
         return True
+
+    def clear_welcome_action_id(self, action_id: str) -> None:
+        """
+        Scans all groups and resets welcome_action_id to None if it matches action_id.
+        """
+        groups = self.load_groups()
+        updated = False
+
+        for group in groups:
+            if group.welcome_action_id == action_id:
+                group.welcome_action_id = None
+                updated = True
+
+        if updated:
+            self.save_groups(groups)

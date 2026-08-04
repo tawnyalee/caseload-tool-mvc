@@ -56,3 +56,19 @@ class TemplateRepository:
             templates.append(template)
 
         self.save_all(templates)
+
+    def get_by_id(self, template_id: str) -> Optional[EmailTemplate]:
+        """Returns the template with the matching id, or None if not found."""
+        templates = self.load_all()
+        return next((t for t in templates if t.id == template_id), None)
+
+    def delete(self, template_id: str) -> bool:
+        """Removes the template matching template_id. Returns True if deleted, False if not found."""
+        templates = self.load_all()
+        updated_templates = [t for t in templates if t.id != template_id]
+
+        if len(updated_templates) == len(templates):
+            return False
+
+        self.save_all(updated_templates)
+        return True
