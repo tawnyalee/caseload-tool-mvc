@@ -1,6 +1,6 @@
 # src/views/add_action_view.py
 import customtkinter as ctk
-from src.views.template_editor_webview import open_template_editor
+from src.views.template_editor_modal import TemplateEditorModal
 import tkinter.messagebox as messagebox
 
 class AddActionView(ctk.CTkFrame):
@@ -13,7 +13,10 @@ class AddActionView(ctk.CTkFrame):
         self.groups = groups if groups is not None else []
         self.initial_group_name = initial_group_name
         self.action_data = action_data
-        
+        # The template this action was originally loaded with, kept stable across
+        # dropdown changes so a delete of some OTHER template can restore this one.
+        self.action_template_id = (action_data or {}).get("template_id")
+
         # Extract group names for dropdown values
         self.group_names = [g.name if hasattr(g, 'name') else str(g) for g in self.groups]
         
@@ -519,7 +522,7 @@ class AddActionView(ctk.CTkFrame):
         self.btn_edit_template.pack(side="left", padx=2)
 
         self.btn_delete_template = ctk.CTkButton(
-            template_row, text="🗑️", width=35, fg_color="transparent", hover_color="#331111", command=self._on_delete_template_click
+            template_row, text="❌ Delete", width=90, command=self._on_delete_template_click
         )
         self.btn_delete_template.pack(side="left", padx=(2, 0))
 
@@ -565,7 +568,8 @@ class AddActionView(ctk.CTkFrame):
 
     def _on_new_template_click(self):
         """Opens the template editor dialog for creating a new template."""
-        open_template_editor(
+        TemplateEditorModal(
+            master=self.winfo_toplevel(),
             template_id=None,
             on_save_callback=self._handle_template_saved
         )
@@ -585,7 +589,8 @@ class AddActionView(ctk.CTkFrame):
             if template_obj:
                 body_content = template_obj.body
 
-        open_template_editor(
+        TemplateEditorModal(
+            master=self.winfo_toplevel(),
             template_id=template_id,
             template_name=selected_name,
             template_body=body_content,
@@ -593,15 +598,25 @@ class AddActionView(ctk.CTkFrame):
         )
 
     def _on_delete_template_click(self):
-        """Deletes the selected template after confirmation."""
+        """Deletes the selected template after confirmation. If some OTHER
+        template is deleted, this action's own assigned template is restored
+        in the dropdown afterward instead of resetting to New/Custom."""
         selected_name = self.email_body_dropdown.get()
         template_id = self.template_map.get(selected_name)
         if not template_id:
             return
 
+        is_this_action_s_template = template_id == self.action_template_id
+        warning = (
+            f"⚠️ This template is currently assigned to this action.\n\n"
+            f"Deleting it will leave this action without an email template "
+            f"until you pick a new one.\n\n"
+        ) if is_this_action_s_template else ""
+
         confirm = messagebox.askokcancel(
             "Delete Template",
             f"❌ Are you sure you want to delete this template?\n\n"
+            f"{warning}"
             f"Template: {selected_name}\n\n"
             f"This action cannot be undone!"
         )
@@ -611,7 +626,11 @@ class AddActionView(ctk.CTkFrame):
         if self.template_repo:
             self.template_repo.delete(template_id)
 
-        self._refresh_template_dropdown()
+        if is_this_action_s_template:
+            self.action_template_id = None  # it's genuinely gone now
+            self._refresh_template_dropdown()
+        else:
+            self._refresh_template_dropdown(select_id=self.action_template_id)
 
     def _handle_template_saved(self, template_id, name, body):
         """Callback executed when a template is saved inside the editor.

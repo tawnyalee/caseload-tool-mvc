@@ -1,0 +1,4 @@
+customtkinter
+pywebview
+pywin32
+pytest
