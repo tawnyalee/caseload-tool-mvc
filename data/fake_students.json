@@ -1,0 +1,34 @@
+[
+    {
+        "salesforce_id": "FAKE-SF-001",
+        "first_name": "Jordan",
+        "last_name": "Rivera",
+        "email": "jordan.rivera@example.test",
+        "phone": "555-0101",
+        "has_signed_up_for_text": true
+    },
+    {
+        "salesforce_id": "FAKE-SF-002",
+        "first_name": "Casey",
+        "last_name": "Nguyen",
+        "email": "casey.nguyen@example.test",
+        "phone": "555-0102",
+        "has_signed_up_for_text": false
+    },
+    {
+        "salesforce_id": "FAKE-SF-003",
+        "first_name": "Priya",
+        "last_name": "Patel",
+        "email": "priya.patel@example.test",
+        "phone": "",
+        "has_signed_up_for_text": false
+    },
+    {
+        "salesforce_id": "FAKE-SF-004",
+        "first_name": "Sam",
+        "last_name": "O'Connor",
+        "email": "sam.oconnor@example.test",
+        "phone": "555-0104",
+        "has_signed_up_for_text": true
+    }
+]

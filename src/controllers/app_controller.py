@@ -9,6 +9,12 @@ from src.services.action_repository import ActionRepository
 from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
 from src.models.email_template import EmailTemplate
+from src.services.activity_logger import ActivityLogger
+from src.services.student_data_provider import FakeStudentDataProvider
+from src.services.email_sender import FakeEmailSender
+from src.services.text_sender import FakeTextSender
+from src.services.note_writer import FakeNoteWriter
+from src.services.action_runner import ActionRunner
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -36,6 +42,24 @@ class AppController:
         self.group_repo = GroupRepository()
         self.action_repo = ActionRepository()
         self.template_repo = TemplateRepository()
+        # ui_callback is wired up in _init_views() once nav_panel exists
+        self.activity_logger = ActivityLogger()
+
+        # Fake/local implementations for now — real Salesforce/Cadence/Outlook
+        # adapters will implement these same interfaces later without any
+        # other code here needing to change.
+        self.student_data_provider = FakeStudentDataProvider()
+        self.email_sender = FakeEmailSender()
+        self.text_sender = FakeTextSender()
+        self.note_writer = FakeNoteWriter()
+        self.action_runner = ActionRunner(
+            student_provider=self.student_data_provider,
+            email_sender=self.email_sender,
+            text_sender=self.text_sender,
+            note_writer=self.note_writer,
+            template_repo=self.template_repo,
+            activity_logger=self.activity_logger,
+        )
 
         # Strongly typed references
         self.groups: List[Group] = []
@@ -90,6 +114,7 @@ class AppController:
             width=350
         )
         self.nav_panel.pack(side="left", fill="y", padx=(10, 5), pady=10)
+        self.activity_logger.ui_callback = self.nav_panel.write_log_message
 
         # Right Side: The permanent Canvas Frame
         self.right_workspace = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -227,11 +252,28 @@ class AppController:
         )
 
     def handle_run_action(self, action_name: str) -> None:
-        print(f"[Controller] Run clicked for: {action_name}")
-        self.switch_workspace_view(
-            PlaceholderView,
-            message=f"🚀 Run Action Panel\n\nExecuting: {action_name}\n[Running Logic Coming Soon]"
+        action = self.scenarios_raw.get(action_name)
+        if action is None or not hasattr(action, "id"):
+            messagebox.showerror("Error", f"Could not find action '{action_name}' to run.")
+            return
+
+        active_group = ""
+        if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
+            active_group = self.nav_panel.group_dropdown.get()
+
+        summary = self.action_runner.run(action, group_name=active_group)
+
+        message = (
+            f"Run complete for '{action_name}':\n\n"
+            f"✅ Succeeded: {summary.succeeded}\n"
+            f"❌ Failed: {summary.failed}\n"
+            f"⏭ Skipped: {summary.skipped}\n\n"
+            f"See the Live Application Log for full details."
         )
+        if summary.failed or summary.skipped:
+            messagebox.showwarning("Run Complete — Review Needed", message)
+        else:
+            messagebox.showinfo("Run Complete", message)
 
     def handle_rename_action(self, old_name: str, new_name: str) -> None:
         """Handles the final save logic when an action is renamed inline."""
@@ -652,34 +694,34 @@ class AppController:
 
     def handle_stop_requested(self) -> None:
         """Emergency break: Alerts and halts active processes."""
-        print("[Controller] ⛔ EMERGENCY STOP REQUESTED!")
+        self.activity_logger.log("⛔ EMERGENCY STOP REQUESTED!")
         messagebox.showerror(
             "Emergency Stop",
             "⛔ Process Stopped!\n\nAll running automation streams have been immediately halted."
         )
 
     def handle_refresh_requested(self) -> None:
-        print("[Controller] Refresh Caseload clicked")
+        self.activity_logger.log("Refresh Caseload clicked")
         messagebox.showinfo(
             "Refresh Caseload",
             "↻ Refreshing Caseload...\n\nFetching the latest caseload rosters and syncing data views."
         )
 
     def handle_sync_ids_requested(self) -> None:
-        print("[Controller] Sync Texting IDs clicked")
+        self.activity_logger.log("Sync Texting IDs clicked")
         messagebox.showinfo(
             "Sync Texting IDs",
             "⬇ Syncing Texting IDs...\n\nDownloading the latest texting configurations from the database."
         )
 
     def handle_restart_browser_requested(self) -> None:
-        print("[Controller] Restart Browser clicked")
+        self.activity_logger.log("Restart Browser clicked")
         confirm = messagebox.askyesno(
             "Restart Browser?",
             "↻ Would you like to restart the automation browser?\n\nThis will close any active browser sessions and launch a fresh instance."
         )
         if confirm:
-            print("[Controller] Restarting browser engine...")
+            self.activity_logger.log("Restarting browser engine...")
     # endregion
 
     def run(self) -> None:
