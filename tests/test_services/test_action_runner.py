@@ -1,5 +1,6 @@
 from src.models.action import Action
 from src.models.email_template import EmailTemplate
+from src.models.group import Group
 from src.models.student import Student
 from src.services.action_runner import ActionRunner
 from src.services.activity_logger import ActivityLogger
@@ -47,7 +48,7 @@ def _make_runner(tmp_path, students, email_fail_for=None, text_fail_for=None, no
     return runner, template, email_sender, text_sender, note_writer
 
 
-def _make_action(template_id, is_email=True, is_text=True, has_note=True):
+def _make_action(template_id, is_email=True, is_text=True, has_note=True, follow_up_note=""):
     return Action(
         name="Welcome Action",
         group_id="G1",
@@ -60,6 +61,7 @@ def _make_action(template_id, is_email=True, is_text=True, has_note=True):
         text_body="Welcome text",
         note_subject="Contacted" if has_note else "",
         note_body="Reached out to student" if has_note else "",
+        follow_up_note=follow_up_note,
     )
 
 
@@ -178,3 +180,108 @@ def test_run_logs_start_template_and_summary(tmp_path):
     assert "Starting run" in joined
     assert "Welcome" in joined  # template name logged
     assert "Run complete" in joined
+
+
+def test_follow_up_note_is_updated_when_note_step_succeeds(tmp_path):
+    students = _make_students()
+    runner, template, _, _, note_writer = _make_runner(tmp_path, students[:1])
+    action = _make_action(template.id, follow_up_note="Sent welcome email")
+
+    runner.run(action, group_name="Test Group")
+
+    assert note_writer.follow_up_notes == {"SF1": "Sent welcome email"}
+
+
+def test_follow_up_note_only_action_still_triggers_a_note_step(tmp_path):
+    """An action with ONLY follow_up_note set (no note_subject/note_body) should
+    still count as having note content and run the note step."""
+    students = _make_students()
+    runner, template, _, _, note_writer = _make_runner(tmp_path, students[:1])
+    action = _make_action(template.id, has_note=False, follow_up_note="Sent welcome email")
+
+    summary = runner.run(action, group_name="Test Group")
+
+    note_steps = [r for r in summary.results if r.step_type == "note"]
+    assert len(note_steps) == 1
+    assert note_steps[0].outcome == "success"
+    assert note_writer.written == []  # no note_subject/body, so write_note was never called
+    assert note_writer.follow_up_notes == {"SF1": "Sent welcome email"}
+
+
+def test_follow_up_note_failure_fails_the_whole_note_step(tmp_path):
+    students = _make_students()
+    template_repo = TemplateRepository(file_path=str(tmp_path / "templates.json"))
+    template = EmailTemplate(name="Welcome", body="<b>Hi</b>")
+    template_repo.save(template)
+
+    note_writer = FakeNoteWriter(fail_for={"SF1"})
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students[:1]),
+        email_sender=FakeEmailSender(),
+        text_sender=FakeTextSender(),
+        note_writer=note_writer,
+        template_repo=template_repo,
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+    action = _make_action(template.id, follow_up_note="Sent welcome email")
+
+    summary = runner.run(action, group_name="Test Group")
+
+    note_steps = [r for r in summary.results if r.step_type == "note"]
+    assert note_steps[0].outcome == "failed"
+
+
+def test_run_welcome_emails_aggregates_across_groups(tmp_path):
+    template_repo = TemplateRepository(file_path=str(tmp_path / "templates.json"))
+    template = EmailTemplate(name="Welcome", body="<b>Hi</b>")
+    template_repo.save(template)
+
+    action_a = _make_action(template.id, is_text=False, has_note=False)
+    action_a.id = "ACT-A"
+    action_b = _make_action(template.id, is_text=False, has_note=False)
+    action_b.id = "ACT-B"
+
+    groups = [
+        Group(name="Group A", group_id="G1", welcome_action_id="ACT-A"),
+        Group(name="Group B", group_id="G2", welcome_action_id="ACT-B"),
+        Group(name="No Welcome Set", group_id="G3", welcome_action_id=None),
+        Group(name="Dangling Reference", group_id="G4", welcome_action_id="ACT-MISSING"),
+    ]
+    actions_by_id = {"ACT-A": action_a, "ACT-B": action_b}
+
+    students = _make_students()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=FakeEmailSender(),
+        text_sender=FakeTextSender(),
+        note_writer=FakeNoteWriter(),
+        template_repo=template_repo,
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    summary = runner.run_welcome_emails(groups, actions_by_id)
+
+    # 2 groups x 3 students x 1 email step = 6 successful steps; other 2 groups skipped
+    assert summary.succeeded == 6
+    assert summary.failed == 0
+    assert summary.skipped == 0
+
+
+def test_send_ad_hoc_email_reaches_every_student_and_isolates_failures(tmp_path):
+    students = _make_students()
+    email_sender = FakeEmailSender(fail_for={"jane@example.test"})
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=email_sender,
+        text_sender=FakeTextSender(),
+        note_writer=FakeNoteWriter(),
+        template_repo=TemplateRepository(file_path=str(tmp_path / "templates.json")),
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    summary = runner.send_ad_hoc_email(subject="Class Canceled", body="<p>No class today.</p>")
+
+    assert summary.succeeded == 2
+    assert summary.failed == 1
+    assert len(email_sender.sent) == 2
+    assert all(e["subject"] == "Class Canceled" for e in email_sender.sent)

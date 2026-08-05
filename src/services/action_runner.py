@@ -3,15 +3,23 @@
 StudentDataProvider.
 
 Per student: email and text are attempted independently of each other (one
-failing doesn't block the other). A note is attempted only if at least one
-of them succeeded — if none did, the note is skipped, not attempted. No
-single student's failure stops the run; every step (success, failure, or
-skip) is logged via ActivityLogger and collected into the final summary.
+failing doesn't block the other). A note step is attempted only if at least
+one of them succeeded — if none did, it's skipped, not attempted. The note
+step covers both writing an interaction note (if note_subject/note_body are
+set) and updating the student's roster-visible follow-up-note field (if
+follow_up_note is set) as a single unit. No single student's failure stops
+the run; every step (success, failure, or skip) is logged via ActivityLogger
+and collected into the final summary.
+
+run_welcome_emails() runs every group's designated welcome action and
+aggregates them into one summary. send_ad_hoc_email() sends a one-off,
+non-template email to every student (e.g. a class cancellation notice).
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from src.models.action import Action
+from src.models.group import Group
 from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
 from src.services.email_sender import EmailSender
@@ -80,7 +88,7 @@ class ActionRunner:
             self.activity_logger.log(f"Using email template: '{template_label}' (id={action.template_id})")
 
         students = self.student_provider.get_students()
-        has_note_content = bool(action.note_subject or action.note_body)
+        has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         summary = ActionRunSummary()
 
         for student in students:
@@ -112,12 +120,54 @@ class ActionRunner:
         )
         return summary
 
+    def run_welcome_emails(self, groups: List[Group], actions_by_id: Dict[str, Action]) -> ActionRunSummary:
+        """Runs every group's designated welcome action (Group.welcome_action_id)
+        and aggregates all of them into a single combined summary."""
+        self.activity_logger.log("Starting welcome-email run across all groups")
+        combined = ActionRunSummary()
+
+        for group in groups:
+            if not group.welcome_action_id:
+                continue
+
+            action = actions_by_id.get(group.welcome_action_id)
+            if not action:
+                self.activity_logger.log(
+                    f"[SKIPPED] Group '{group.name}' has a welcome_action_id with no matching action"
+                )
+                continue
+
+            group_summary = self.run(action, group_name=group.name)
+            combined.results.extend(group_summary.results)
+
+        self.activity_logger.log(
+            f"Welcome-email run complete — {combined.succeeded} succeeded, "
+            f"{combined.failed} failed, {combined.skipped} skipped"
+        )
+        return combined
+
+    def send_ad_hoc_email(self, subject: str, body: str, signature: str = "") -> ActionRunSummary:
+        """Sends a one-off email (not tied to any saved Action or template) to
+        every student from the provider — e.g. a class cancellation notice."""
+        self.activity_logger.log(f"Starting ad-hoc email send — Subject: '{subject}'")
+        students = self.student_provider.get_students()
+        summary = ActionRunSummary()
+
+        for student in students:
+            summary.results.append(self._send_email(student, subject, body, signature))
+
+        self.activity_logger.log(
+            f"Ad-hoc send complete — {summary.succeeded} succeeded, {summary.failed} failed"
+        )
+        return summary
+
     def _attempt_email(self, student: Student, action: Action, template) -> StepResult:
         body = template.body if template else ""
+        return self._send_email(student, action.email_subject, body, action.email_signature)
+
+    def _send_email(self, student: Student, subject: str, body: str, signature: str) -> StepResult:
         try:
-            self.email_sender.send(
-                to_email=student.email, subject=action.email_subject, body=body, signature=action.email_signature
-            )
+            self.email_sender.send(to_email=student.email, subject=subject, body=body, signature=signature)
             self.activity_logger.log(f"[EMAIL] Sent to {student.full_name} <{student.email}>")
             return StepResult(student=student, step_type="email", outcome="success")
         except Exception as exc:
@@ -135,9 +185,14 @@ class ActionRunner:
 
     def _attempt_note(self, student: Student, action: Action) -> StepResult:
         try:
-            self.note_writer.write_note(
-                salesforce_id=student.salesforce_id, subject=action.note_subject, body=action.note_body
-            )
+            if action.note_subject or action.note_body:
+                self.note_writer.write_note(
+                    salesforce_id=student.salesforce_id, subject=action.note_subject, body=action.note_body
+                )
+            if action.follow_up_note:
+                self.note_writer.update_follow_up_note(
+                    salesforce_id=student.salesforce_id, text=action.follow_up_note
+                )
             self.activity_logger.log(f"[NOTE] Written for {student.full_name}")
             return StepResult(student=student, step_type="note", outcome="success")
         except Exception as exc:

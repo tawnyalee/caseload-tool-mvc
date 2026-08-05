@@ -19,6 +19,7 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.on_add_action_requested = None
         self.on_settings_requested = None
         self.on_help_requested = None
+        self.on_dashboard_requested = None
         self.on_rename_requested = None  # Rename Action
         self.on_add_group_requested = None
         self.on_rename_group_requested = None
@@ -161,6 +162,18 @@ class ScenarioNavPanel(ctk.CTkFrame):
             command=self._on_settings_clicked
         )
         self.settings_btn.pack(side="right", padx=5)
+
+        # Dashboard next to Settings (moving inward left again)
+        self.dashboard_btn = ctk.CTkButton(
+            self.utility_frame,
+            text="📊 Dashboard",
+            width=100,
+            fg_color="transparent",
+            text_color=("#1f538d", "#2cc98f"),
+            hover_color=("#e0e0e0", "#2d2d2d"),
+            command=self._on_dashboard_clicked
+        )
+        self.dashboard_btn.pack(side="right", padx=5)
     #endregion
 
     def refresh_data(self, groups: list[Group], scenarios_raw: dict):
@@ -291,6 +304,10 @@ class ScenarioNavPanel(ctk.CTkFrame):
     def _on_settings_clicked(self):
         if self.on_settings_requested:
             self.on_settings_requested()
+
+    def _on_dashboard_clicked(self):
+        if self.on_dashboard_requested:
+            self.on_dashboard_requested()
 
     def _on_help_clicked(self):
         if self.on_help_requested:

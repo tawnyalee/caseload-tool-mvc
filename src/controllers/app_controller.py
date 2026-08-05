@@ -15,6 +15,8 @@ from src.services.email_sender import FakeEmailSender
 from src.services.text_sender import FakeTextSender
 from src.services.note_writer import FakeNoteWriter
 from src.services.action_runner import ActionRunner
+from src.views.dashboard_view import DashboardView
+from src.views.ad_hoc_email_modal import AdHocEmailModal
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -124,7 +126,7 @@ class AppController:
         self._wire_events()
 
         # Show the initial view on startup
-        self.show_default_roster()
+        self.handle_dashboard_requested()
 
     def _wire_events(self) -> None:
         """Centralized place to wire up view callbacks to controller actions."""
@@ -140,6 +142,7 @@ class AppController:
             # Wire up Settings and Help callbacks
             self.nav_panel.on_settings_requested = self.handle_settings_requested
             self.nav_panel.on_help_requested = self.handle_help_requested
+            self.nav_panel.on_dashboard_requested = self.handle_dashboard_requested
 
             # Wire up Group management buttons
             self.nav_panel.on_add_group_requested = self.handle_add_group
@@ -236,6 +239,44 @@ class AppController:
             groups=self.groups,
             initial_group_name=active_group
         )
+
+    def handle_dashboard_requested(self) -> None:
+        self.activity_logger.log("Dashboard opened")
+        self.switch_workspace_view(DashboardView, controller=self)
+
+    def handle_send_welcome_emails(self) -> None:
+        actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
+        summary = self.action_runner.run_welcome_emails(self.groups, actions_by_id)
+
+        message = (
+            f"Welcome emails complete:\n\n"
+            f"✅ Succeeded: {summary.succeeded}\n"
+            f"❌ Failed: {summary.failed}\n"
+            f"⏭ Skipped: {summary.skipped}\n\n"
+            f"See the Live Application Log for full details."
+        )
+        if summary.failed or summary.skipped:
+            messagebox.showwarning("Welcome Emails — Review Needed", message)
+        else:
+            messagebox.showinfo("Welcome Emails Sent", message)
+
+    def handle_compose_ad_hoc_email(self) -> None:
+        main_win = self.right_workspace.winfo_toplevel()
+        AdHocEmailModal(master=main_win, on_send_callback=self._handle_ad_hoc_email_send)
+
+    def _handle_ad_hoc_email_send(self, subject: str, body: str) -> None:
+        summary = self.action_runner.send_ad_hoc_email(subject, body)
+
+        message = (
+            f"Ad-hoc email complete:\n\n"
+            f"✅ Succeeded: {summary.succeeded}\n"
+            f"❌ Failed: {summary.failed}\n\n"
+            f"See the Live Application Log for full details."
+        )
+        if summary.failed:
+            messagebox.showwarning("Send Complete — Review Needed", message)
+        else:
+            messagebox.showinfo("Send Complete", message)
 
     def handle_settings_requested(self) -> None:
         print("[Controller] Settings button clicked")
