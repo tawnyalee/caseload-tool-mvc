@@ -14,6 +14,7 @@ from src.services.student_data_provider import FakeStudentDataProvider
 from src.services.email_sender import FakeEmailSender
 from src.services.text_sender import FakeTextSender
 from src.services.note_writer import FakeNoteWriter
+from src.services.outlook_signature_provider import LocalOutlookSignatureProvider, get_signature_names_or_fallback
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
 from src.views.ad_hoc_email_modal import AdHocEmailModal
@@ -54,6 +55,10 @@ class AppController:
         self.email_sender = FakeEmailSender()
         self.text_sender = FakeTextSender()
         self.note_writer = FakeNoteWriter()
+
+        # Real, not fake — this just lists files under the local Outlook
+        # signatures folder, so it works today without a full Outlook adapter.
+        self.signature_provider = LocalOutlookSignatureProvider()
         self.action_runner = ActionRunner(
             student_provider=self.student_data_provider,
             email_sender=self.email_sender,
@@ -262,10 +267,15 @@ class AppController:
 
     def handle_compose_ad_hoc_email(self) -> None:
         main_win = self.right_workspace.winfo_toplevel()
-        AdHocEmailModal(master=main_win, on_send_callback=self._handle_ad_hoc_email_send)
+        signature_names = get_signature_names_or_fallback(self.signature_provider)
+        AdHocEmailModal(
+            master=main_win,
+            on_send_callback=self._handle_ad_hoc_email_send,
+            signature_names=signature_names,
+        )
 
-    def _handle_ad_hoc_email_send(self, subject: str, body: str) -> None:
-        summary = self.action_runner.send_ad_hoc_email(subject, body)
+    def _handle_ad_hoc_email_send(self, subject: str, body: str, signature: str = "") -> None:
+        summary = self.action_runner.send_ad_hoc_email(subject, body, signature)
 
         message = (
             f"Ad-hoc email complete:\n\n"

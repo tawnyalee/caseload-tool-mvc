@@ -1,6 +1,7 @@
 # src/views/add_action_view.py
 import customtkinter as ctk
 from src.views.template_editor_modal import TemplateEditorModal
+from src.services.outlook_signature_provider import get_signature_names_or_fallback
 import tkinter.messagebox as messagebox
 
 class AddActionView(ctk.CTkFrame):
@@ -23,6 +24,9 @@ class AddActionView(ctk.CTkFrame):
         # Load existing templates map from controller if available
         self.template_repo = getattr(controller, "template_repo", None)
         self.template_map = {}  # display name -> template id, rebuilt whenever the list changes
+
+        # Real Outlook signature names from the controller, if available
+        self.signature_provider = getattr(controller, "signature_provider", None)
 
         # Determine header title based on mode
         self.mode_title = "Edit Action" if self.action_data else "Add New Action"
@@ -530,8 +534,10 @@ class AddActionView(ctk.CTkFrame):
         lbl.pack(anchor="w", padx=10, pady=(5, 0))
 
         self.email_signature_dropdown = ctk.CTkComboBox(
-            self.email_container, 
-            values=["Default Outlook Signature", "None", "Custom Signature 1"],
+            self.email_container,
+            # No "None" option — signatures are required, and offering one invites
+            # accidentally sending an unsigned email.
+            values=get_signature_names_or_fallback(self.signature_provider),
             width=220
         )
         self.email_signature_dropdown.pack(anchor="w", padx=10, pady=(2, 10))

@@ -9,10 +9,10 @@ class AdHocEmailModal(ctk.CTkToplevel):
     tied to any saved Action or template. Reuses the same WYSIWYG editor as
     the template editor."""
 
-    def __init__(self, master, on_send_callback=None):
+    def __init__(self, master, on_send_callback=None, signature_names=None):
         super().__init__(master)
         self.title("Send Email to All Students")
-        self.geometry("600x520")
+        self.geometry("600x600")
         self.on_send_callback = on_send_callback
         self._link_urls = {}
 
@@ -24,6 +24,18 @@ class AdHocEmailModal(ctk.CTkToplevel):
 
         self.subject_entry = ctk.CTkEntry(self, placeholder_text="e.g., Class Canceled Today")
         self.subject_entry.pack(fill="x", padx=15, pady=(0, 10))
+
+        lbl_signature = ctk.CTkLabel(self, text="Select Outlook Signature:", font=ctk.CTkFont(weight="bold"))
+        lbl_signature.pack(anchor="w", padx=15, pady=(0, 2))
+
+        self.signature_dropdown = ctk.CTkComboBox(
+            self,
+            # No "None" option — signatures are required, and offering one invites
+            # accidentally sending an unsigned email.
+            values=signature_names or ["No Outlook signatures found"],
+            width=220,
+        )
+        self.signature_dropdown.pack(anchor="w", padx=15, pady=(0, 10))
 
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
         toolbar.pack(fill="x", padx=15, pady=(0, 5))
@@ -132,5 +144,5 @@ class AdHocEmailModal(ctk.CTkToplevel):
             return
 
         if self.on_send_callback:
-            self.on_send_callback(subject, body)
+            self.on_send_callback(subject, body, self.signature_dropdown.get())
         self.destroy()
