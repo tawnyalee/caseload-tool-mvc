@@ -57,13 +57,11 @@ class GroupRepository:
         
         # Check if group name already exists (case-insensitive)
         if any(g.name.strip().lower() == group_name.strip().lower() for g in groups):
-            print(f"[GroupRepository] Warning: Group '{group_name}' already exists.")
             return None
 
         new_group = Group(name=group_name.strip())
         groups.append(new_group)
         self.save_groups(groups)
-        print(f"[GroupRepository] Successfully created and saved new group: '{new_group.name}'")
         return new_group
 
     def delete_group(self, group_name: str) -> bool:

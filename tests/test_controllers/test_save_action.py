@@ -12,6 +12,7 @@ def test_save_action_updates_active_group_and_reloads_dict():
     controller.group_repo.load_groups.return_value = []
     
     controller.action_repo = MagicMock()
+    controller.activity_logger = MagicMock()
     controller._reload_scenarios_dict = MagicMock()
 
     # Mock the nav_panel UI component
@@ -37,4 +38,8 @@ def test_save_action_updates_active_group_and_reloads_dict():
     controller._reload_scenarios_dict.assert_called_once()
     assert mock_nav_panel.groups == controller.groups
     assert mock_nav_panel.scenarios_raw == controller.scenarios_raw
-    mock_nav_panel._on_group_selected.assert_called_once_with("Tier 1 Support")
+    # Uses the refresh-only path, not _on_group_selected — that one also fires
+    # the controller's group-switch callback, which wrongly triggered the
+    # "unsaved changes" confirmation dialog after every successful save.
+    mock_nav_panel.refresh_active_group_display.assert_called_once_with("Tier 1 Support")
+    mock_nav_panel._on_group_selected.assert_not_called()

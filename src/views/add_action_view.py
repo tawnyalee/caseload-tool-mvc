@@ -1,4 +1,5 @@
 # src/views/add_action_view.py
+import uuid
 import customtkinter as ctk
 from src.views.template_editor_modal import TemplateEditorModal
 from src.services.outlook_signature_provider import get_signature_names_or_fallback
@@ -9,11 +10,14 @@ class AddActionView(ctk.CTkFrame):
         # Prefer master, fallback to parent if passed
         container = master if master is not None else parent
         super().__init__(container, **kwargs)
-        
+
         self.controller = controller
         self.groups = groups if groups is not None else []
         self.initial_group_name = initial_group_name
         self.action_data = action_data
+        # This action's real, stable ID — generated now (not deferred to Save) so the
+        # welcome-email conflict check can use a real ID even on a brand-new action.
+        self.action_id = action_data.get("id") if action_data else str(uuid.uuid4())
         # The template this action was originally loaded with, kept stable across
         # dropdown changes so a delete of some OTHER template can restore this one.
         self.action_template_id = (action_data or {}).get("template_id")
@@ -99,7 +103,7 @@ class AddActionView(ctk.CTkFrame):
         # Action ID
         id_lbl = ctk.CTkLabel(meta_frame, text="Action ID (Auto)", font=ctk.CTkFont(weight="bold"))
         id_lbl.grid(row=0, column=2, padx=10, pady=(10, 2), sticky="w")
-        self.id_display = ctk.CTkLabel(meta_frame, text="ACT-AUTO-TEMP", text_color="gray")
+        self.id_display = ctk.CTkLabel(meta_frame, text=str(self.action_id), text_color="gray")
         self.id_display.grid(row=1, column=2, padx=10, pady=(0, 10), sticky="w")
 
         # --- Dynamic Filters Header ---
@@ -282,16 +286,6 @@ class AddActionView(ctk.CTkFrame):
             self.send_email_var.set("off")
             self._toggle_email_section()
 
-        # 5. Populate Welcome Email Checkbox State
-        is_welcome = False
-        action_group_id = data.get("group_id")
-        action_id = data.get("id")
-        if action_group_id and action_id:
-            matched_group = next((g for g in self.groups if g.id == action_group_id), None)
-            if matched_group and matched_group.welcome_action_id == action_id:
-                is_welcome = True
-        self.is_welcome_email_var.set("on" if is_welcome else "off")
-
         # 6. Text Channel Setup & Auto-Expand
         text_config = data.get("text_config") or {
             "subject": data.get("text_subject", ""),
@@ -359,7 +353,7 @@ class AddActionView(ctk.CTkFrame):
         """Gathers all current form field values into a dictionary compatible with both View and Controller schemas."""
         return {
             # --- Metadata ---
-            "id": self.action_data.get("id") if self.action_data else None,
+            "id": self.action_id,
             "name": self.name_entry.get().strip(),
             "group_name": self.group_dropdown.get(),
             "is_welcome_email": self.is_welcome_email_var.get() == "on",
@@ -491,16 +485,70 @@ class AddActionView(ctk.CTkFrame):
         else:
             self.btn_delete_template.configure(state="disabled")
 
+    def _get_selected_group(self):
+        """Resolves the currently selected group in the dropdown to its Group
+        object — same by-name resolution the rest of this form already uses
+        for the group dropdown (there's no ID-based selector for it). Some
+        tests pass plain strings for `groups` instead of Group objects, so
+        skip anything without the attributes we need rather than erroring."""
+        group_name = self.group_dropdown.get()
+        return next(
+            (g for g in self.groups if hasattr(g, "name") and hasattr(g, "welcome_action_id") and g.name == group_name),
+            None
+        )
+
+    def _find_action_name_by_id(self, action_id: str):
+        """Looks up an existing action's display name for the conflict dialog.
+        Returns None if it can't be resolved (no controller/action_repo, or
+        the id doesn't match anything) — the dialog falls back to generic text."""
+        action_repo = getattr(self.controller, "action_repo", None)
+        if not action_repo:
+            return None
+        match = next((a for a in action_repo.load_actions() if a.id == action_id), None)
+        return match.name if match else None
+
+    def _on_welcome_checkbox_toggled(self):
+        """Fires live when the checkbox is clicked (not deferred to Save).
+        Checking it while another action already owns the group's welcome
+        slot prompts for confirmation; declining reverts the check. Only
+        updates the in-memory Group object — self.groups is the same list
+        the controller holds, so this is visible immediately, but nothing
+        touches disk until the professor clicks Save Action."""
+        matched_group = self._get_selected_group()
+        if not matched_group:
+            return
+
+        if self.is_welcome_email_var.get() != "on":
+            if matched_group.welcome_action_id == self.action_id:
+                matched_group.welcome_action_id = None
+            return
+
+        current_welcome_id = matched_group.welcome_action_id
+        if current_welcome_id and current_welcome_id != self.action_id:
+            existing_name = self._find_action_name_by_id(current_welcome_id)
+            existing_label = f"'{existing_name}'" if existing_name else "another action"
+            confirm = messagebox.askyesno(
+                "Replace Welcome Email?",
+                f"Group '{matched_group.name}' already has {existing_label} designated "
+                f"as its welcome email.\n\nDo you want to replace it with this action?"
+            )
+            if not confirm:
+                self.is_welcome_email_var.set("off")
+                return
+
+        matched_group.welcome_action_id = self.action_id
+
     def _build_email_ui(self):
         lbl = ctk.CTkLabel(self.email_container, text="✉️ Email Details", font=ctk.CTkFont(weight="bold"))
         lbl.pack(anchor="w", padx=10, pady=5)
         #checkbox to set email as welcome email
         self.chk_welcome_email = ctk.CTkCheckBox(
-            self.email_container, 
-            text="Is Group Welcome Email", 
-            variable=self.is_welcome_email_var, 
-            onvalue="on", 
-            offvalue="off"
+            self.email_container,
+            text="Is Group Welcome Email",
+            variable=self.is_welcome_email_var,
+            onvalue="on",
+            offvalue="off",
+            command=self._on_welcome_checkbox_toggled
         )
         self.chk_welcome_email.pack(anchor="w", padx=10, pady=(5, 10))
         
@@ -564,13 +612,9 @@ class AddActionView(ctk.CTkFrame):
     def _on_save_clicked(self):
         """Callback executed when the save button is clicked."""
         form_data = self.get_action_data()
-        
+
         if self.controller and hasattr(self.controller, "save_action"):
-            success = self.controller.save_action(form_data)
-            if success:
-                print("[View] Action saved successfully through Controller.")
-        else:
-            print("[View] Error: No controller attached to handle save_action.")
+            self.controller.save_action(form_data)
 
     def _on_new_template_click(self):
         """Opens the template editor dialog for creating a new template."""

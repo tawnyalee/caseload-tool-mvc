@@ -182,8 +182,6 @@ class AppController:
     def handle_group_selected(self, group_name: str) -> None:
         """Clears the right-hand workspace when the group changes, confirming first if an
         open AddActionView would lose unsaved changes."""
-        print(f"[Controller] Group selected: {group_name}")
-
         if isinstance(self.current_workspace_view, AddActionView):
             confirm = messagebox.askyesno(
                 "Switch Group?",
@@ -206,8 +204,6 @@ class AppController:
 
     # region Event Handlers
     def handle_edit_action(self, action_name: str) -> None:
-        print(f"[Controller] Switching right panel to EDIT mode for: {action_name}")
-    
         active_group = ""
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
@@ -218,9 +214,6 @@ class AppController:
         # 2. Convert model object to dictionary if necessary
         if hasattr(real_action_data, "__dict__"):
             real_action_data = real_action_data.__dict__
-
-        #debug printout
-        print(real_action_data)
 
         # 3. Load the workspace view with real action data
         self.switch_workspace_view(
@@ -233,7 +226,6 @@ class AppController:
 
     def handle_add_action_clicked(self) -> None:
         """Loads the rich form configuration panel on the right side."""
-        print("[Controller] Loading Add Action Form View")
         active_group = ""
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
@@ -289,14 +281,12 @@ class AppController:
             messagebox.showinfo("Send Complete", message)
 
     def handle_settings_requested(self) -> None:
-        print("[Controller] Settings button clicked")
         self.switch_workspace_view(
             PlaceholderView,
             message="⚙ Settings Panel\n\n[Settings Configuration View - Logic Coming Soon]"
         )
 
     def handle_help_requested(self) -> None:
-        print("[Controller] Help button clicked")
         self.switch_workspace_view(
             PlaceholderView,
             message="❓ Help & Documentation\n\n[User Guides & Support - Logic Coming Soon]"
@@ -328,8 +318,6 @@ class AppController:
 
     def handle_rename_action(self, old_name: str, new_name: str) -> None:
         """Handles the final save logic when an action is renamed inline."""
-        print(f"[Controller] Action Renamed: '{old_name}' -> '{new_name}'")
-
         if not new_name or old_name == new_name:
             return
 
@@ -360,9 +348,9 @@ class AppController:
         if self.nav_panel:
             self.nav_panel.refresh_data(self.groups, self.scenarios_raw)
 
-    def handle_add_group(self) -> None:
-        print("[Controller] Add Group clicked")
+        self.activity_logger.log(f"Renamed action '{old_name}' to '{new_name}'")
 
+    def handle_add_group(self) -> None:
         main_win = self.right_workspace.winfo_toplevel()
 
         dialog = ctk.CTkToplevel(main_win)
@@ -414,13 +402,14 @@ class AppController:
                         group_names = [g.name for g in self.groups]
                         self.nav_panel.group_dropdown.configure(values=group_names)
                         self.nav_panel.group_dropdown.set(new_group.name)
-                        
-                        self.nav_panel._on_group_selected(new_group.name)
 
+                        self.nav_panel.refresh_active_group_display(new_group.name)
+
+                    self.activity_logger.log(f"Added group '{new_group.name}'")
                     dialog.destroy()
                 else:
                     messagebox.showwarning(
-                        "Duplicate Group", 
+                        "Duplicate Group",
                         f"A group named '{entered_name}' already exists."
                     )
             else:
@@ -435,8 +424,6 @@ class AppController:
         btn_save.pack(side="right")
 
     def handle_rename_group(self, group_name: str) -> None:
-        print(f"[Controller] Rename Group clicked for: {group_name}")
-
         if group_name == "General":
             messagebox.showwarning("Rename Group", "The default 'General' group cannot be renamed.")
             return
@@ -501,8 +488,9 @@ class AppController:
                     group_names = [g.name for g in self.groups]
                     self.nav_panel.group_dropdown.configure(values=group_names)
                     self.nav_panel.group_dropdown.set(new_name)
-                    self.nav_panel._on_group_selected(new_name)
+                    self.nav_panel.refresh_active_group_display(new_name)
 
+                self.activity_logger.log(f"Renamed group '{group_name}' to '{new_name}'")
                 dialog.destroy()
             else:
                 messagebox.showerror("Error", f"Could not find group '{group_name}' to rename.")
@@ -517,8 +505,6 @@ class AppController:
 
     def handle_delete_group(self, group_name: str) -> None:
         """Deletes a group after confirmation and updates UI state."""
-        print(f"[Controller] Delete Group requested for: {group_name}")
-
         # Guard against deleting default/protected group
         if group_name == "General":
             messagebox.showwarning("Delete Group", "The default 'General' group cannot be deleted.")
@@ -545,8 +531,9 @@ class AppController:
                     
                     # Switch selected group back to 'General' safely
                     self.nav_panel.group_dropdown.set("General")
-                    self.nav_panel._on_group_selected("General")
+                    self.nav_panel.refresh_active_group_display("General")
 
+                self.activity_logger.log(f"Deleted group '{group_name}'")
                 messagebox.showinfo("Success", f"Group '{group_name}' was successfully deleted.")
             else:
                 messagebox.showerror("Error", f"Could not find group '{group_name}' to delete.")
@@ -576,8 +563,6 @@ class AppController:
                 target_group.scenarios.append(action_name)
 
             current_welcome_id = target_group.welcome_action_id
-            print(f"[DEBUG] target_group={target_group.name}, current_welcome_id={current_welcome_id}, action_id={action_id}, is_welcome_email={is_welcome_email}")
-
 
             if is_welcome_email:
                 if current_welcome_id and current_welcome_id != action_id:
@@ -590,18 +575,18 @@ class AppController:
                         f"Group '{target_group.name}' already has {existing_name} designated as its welcome email.\n\n"
                         f"Do you want to replace it with this action?"
                     )
-                    
+
                     if not confirm:
-                        print("[Controller] Save cancelled by user.")
+                        self.activity_logger.log(f"Cancelled saving '{action_name}' — welcome email not replaced")
                         return False
 
                 target_group.welcome_action_id = action_id
-                print(f"[Controller] Set group '{target_group.name}' welcome_action_id to '{action_id}'.")
+                self.activity_logger.log(f"Set '{action_name}' as the welcome email for group '{target_group.name}'")
 
             else:
                 if current_welcome_id == action_id:
                     target_group.welcome_action_id = None
-                    print(f"[Controller] Cleared welcome_action_id for group '{target_group.name}'.")
+                    self.activity_logger.log(f"Cleared '{action_name}' as the welcome email for group '{target_group.name}'")
 
         # Save updated group so scenarios list persists
         self.group_repo.save_groups(self.groups)
@@ -640,9 +625,9 @@ class AppController:
             active_group = self.nav_panel.group_dropdown.get()
             self.nav_panel.groups = self.groups
             self.nav_panel.scenarios_raw = self.scenarios_raw
-            self.nav_panel._on_group_selected(active_group)
+            self.nav_panel.refresh_active_group_display(active_group)
 
-        print(f"[Controller] Successfully saved action: {action_name}")
+        self.activity_logger.log(f"Saved action '{action_name}'")
         messagebox.showinfo("Success", "Action saved successfully!")
         return True
 
@@ -682,8 +667,6 @@ class AppController:
 
     def handle_delete_action(self, action_name: str) -> None:
         """Deletes an action after user confirmation and updates the UI."""
-        print(f"[Controller] Delete Action clicked for: '{action_name}'")
-
         # 1. Fetch action objects list or dict
         actions = self.action_repo.load_actions()
         target_action = None
@@ -740,7 +723,7 @@ class AppController:
             if self.nav_panel:
                 self.nav_panel.refresh_data(self.groups, self.scenarios_raw)
 
-            print(f"[Controller] Successfully deleted action: {target_name}")
+            self.activity_logger.log(f"Deleted action '{target_name}'")
             messagebox.showinfo("Success", f"Action '{target_name}' was successfully deleted.")
 
     def handle_stop_requested(self) -> None:

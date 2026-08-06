@@ -4,6 +4,7 @@ import pytest
 import customtkinter as ctk
 from src.views.add_action_view import AddActionView
 from src.models.email_template import EmailTemplate
+from src.models.group import Group
 from src.services.template_repository import TemplateRepository
 
 
@@ -117,3 +118,74 @@ def test_delete_actions_own_template_warns_and_falls_back_to_new_custom(ctk_root
     assert view.email_body_dropdown.get() == "New / Custom Template"
     assert repo.get_by_id(assigned.id) is None
     assert view.action_template_id is None
+
+
+def test_new_action_gets_a_real_id_immediately(ctk_root):
+    """A brand-new (unsaved) action needs a real, stable id right away so the
+    live welcome-checkbox conflict check has something to compare against."""
+    view = AddActionView(master=ctk_root, controller=MockController())
+    assert view.action_id
+    assert view.get_action_data()["id"] == view.action_id
+
+
+def test_checking_welcome_box_with_no_existing_claim_sets_it_silently(ctk_root):
+    group = Group(name="Group A", welcome_action_id=None)
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], initial_group_name="Group A")
+
+    view.chk_welcome_email.toggle()  # simulates an actual user click, incl. firing `command`
+
+    assert group.welcome_action_id == view.action_id
+    assert view.is_welcome_email_var.get() == "on"
+
+
+def test_checking_welcome_box_with_existing_claim_prompts_and_confirms(ctk_root):
+    group = Group(name="Group A", welcome_action_id="some-other-action-id")
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], initial_group_name="Group A")
+
+    with patch("src.views.add_action_view.messagebox.askyesno", return_value=True) as mock_confirm:
+        view.chk_welcome_email.toggle()
+        assert mock_confirm.called
+
+    assert group.welcome_action_id == view.action_id
+    assert view.is_welcome_email_var.get() == "on"
+
+
+def test_checking_welcome_box_with_existing_claim_reverts_on_cancel(ctk_root):
+    group = Group(name="Group A", welcome_action_id="some-other-action-id")
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], initial_group_name="Group A")
+
+    with patch("src.views.add_action_view.messagebox.askyesno", return_value=False):
+        view.chk_welcome_email.toggle()
+
+    assert group.welcome_action_id == "some-other-action-id"
+    assert view.is_welcome_email_var.get() == "off"
+
+
+def test_unchecking_welcome_box_clears_own_claim(ctk_root):
+    view = AddActionView(master=ctk_root, controller=MockController())
+    group = Group(name="Group A", welcome_action_id=None)
+    view.groups = [group]
+    view.group_dropdown.configure(values=["Group A"])
+    view.group_dropdown.set("Group A")
+
+    view.chk_welcome_email.toggle()  # check it
+    assert group.welcome_action_id == view.action_id
+
+    view.chk_welcome_email.toggle()  # uncheck it
+    assert group.welcome_action_id is None
+
+
+def test_populate_fields_checks_box_when_action_is_groups_welcome_action(ctk_root):
+    group = Group(name="Group A", group_id="grp-1", welcome_action_id="ACT-1")
+    action_data = {"id": "ACT-1", "name": "Welcome Action", "group_id": "grp-1"}
+
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], action_data=action_data)
+    assert view.is_welcome_email_var.get() == "on"
+
+
+def test_populate_fields_leaves_box_unchecked_when_action_is_not_the_welcome_action(ctk_root):
+    group = Group(name="Group A", group_id="grp-1", welcome_action_id="ACT-OTHER")
+    action_data = {"id": "ACT-1", "name": "Some Action", "group_id": "grp-1"}
+
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], action_data=action_data)
+    assert view.is_welcome_email_var.get() == "off"

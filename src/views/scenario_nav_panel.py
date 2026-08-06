@@ -208,11 +208,8 @@ class ScenarioNavPanel(ctk.CTkFrame):
         log_content = self.log_textbox.get("1.0", "end-1c")
         self.clipboard_clear()
         self.clipboard_append(log_content)
-        
-        # 1. Terminal print for development feedback
-        print("[View] Log content copied to clipboard!")
-        
-        # 2. Sleek, inline feedback for the user right inside the app log
+
+        # Sleek, inline feedback for the user right inside the app log
         self.write_log_message("[System] Log successfully copied to clipboard! 📋")
     #endregion
 
@@ -329,9 +326,17 @@ class ScenarioNavPanel(ctk.CTkFrame):
         if self.on_rename_requested:
             self.on_rename_requested(action_name)
 
+    def refresh_active_group_display(self, group_name: str) -> None:
+        """Refreshes the header and action table for a group without treating
+        it as a user-initiated group switch — no unsaved-changes confirmation,
+        no callback to the controller. Use this after a save/add/rename/delete
+        that needs the nav panel to reflect current data; use _on_group_selected
+        (or a real dropdown selection) only for an actual user-driven switch."""
+        self.actions_header_label.configure(text=f"{group_name} - Actions")
+        self._render_table(group_name)
+
     def _on_group_selected(self, selected_group_name: str):
-        self.actions_header_label.configure(text=f"{selected_group_name} - Actions")
-        self._render_table(selected_group_name)
+        self.refresh_active_group_display(selected_group_name)
         if self.on_group_selected:
             self.on_group_selected(selected_group_name)
 

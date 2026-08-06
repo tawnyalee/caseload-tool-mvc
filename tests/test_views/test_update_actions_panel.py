@@ -46,3 +46,27 @@ def test_refresh_data_falls_back_to_general_if_group_deleted(mock_nav_panel):
     mock_nav_panel.group_dropdown.set.assert_called_once_with("General")
     mock_nav_panel.actions_header_label.configure.assert_called_once_with(text="General - Actions")
     mock_nav_panel._render_table.assert_called_once_with("General")
+
+
+def test_refresh_active_group_display_does_not_fire_group_selected_callback(mock_nav_panel):
+    """A plain post-save/CRUD refresh must not trigger the controller's
+    group-switch handling (unsaved-changes confirmation, workspace swap) —
+    only an actual user-driven dropdown selection should do that."""
+    mock_nav_panel.on_group_selected = MagicMock()
+
+    mock_nav_panel.refresh_active_group_display("Work")
+
+    mock_nav_panel.actions_header_label.configure.assert_called_once_with(text="Work - Actions")
+    mock_nav_panel._render_table.assert_called_once_with("Work")
+    mock_nav_panel.on_group_selected.assert_not_called()
+
+
+def test_on_group_selected_still_fires_the_callback_for_real_switches(mock_nav_panel):
+    """A genuine dropdown selection (the user clicking a different group)
+    still needs to notify the controller so the unsaved-changes guard runs."""
+    mock_nav_panel.on_group_selected = MagicMock()
+
+    mock_nav_panel._on_group_selected("Work")
+
+    mock_nav_panel._render_table.assert_called_once_with("Work")
+    mock_nav_panel.on_group_selected.assert_called_once_with("Work")
