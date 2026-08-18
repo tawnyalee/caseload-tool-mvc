@@ -181,8 +181,11 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.groups = groups
         self.scenarios_raw = scenarios_raw
         
-        # 1. Update dropdown values list
+        # 1. Update dropdown values list ("General" is a protected group that
+        # must always be selectable, even if it's missing from `groups`)
         self.group_names = [group.name for group in self.groups]
+        if "General" not in self.group_names:
+            self.group_names.insert(0, "General")
         self.group_dropdown.configure(values=self.group_names)
         
         # 2. Preserve active selection (fallback to 'General' if selected group was deleted)
