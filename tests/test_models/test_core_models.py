@@ -36,14 +36,14 @@ def test_action_flags_and_properties():
         name="Follow Up",
         is_email=True,
         is_text=False,
-        interaction_type=InteractionType.SINGLE_EMAIL,
+        interaction_type=InteractionType.EMAIL,
     )
 
     assert action.has_email is True
     assert action.has_text is False
     assert action.filters == []
-    assert action.interaction_type == InteractionType.SINGLE_EMAIL
-    assert action.interaction_type.value == "Email to Student"
+    assert action.interaction_type == InteractionType.EMAIL
+    assert action.interaction_type.value == "Email"
 
 
 def test_email_template_creation():
