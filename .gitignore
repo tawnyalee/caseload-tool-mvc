@@ -3,3 +3,9 @@ __pycache__/
 .vs/
 .vs/
 logs/
+
+# Local per-install data (groups/actions/templates a user creates in-app) -
+# not meant to be shipped or shared via git; each install starts empty.
+data/templates.json
+src/data/actions.json
+src/data/groups.json
