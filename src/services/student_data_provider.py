@@ -13,10 +13,13 @@ everything available from the source.
 """
 import json
 from abc import ABC, abstractmethod
+from dataclasses import fields
 from pathlib import Path
 from typing import List
 
 from src.models.student import Student
+
+_STUDENT_FIELD_NAMES = {f.name for f in fields(Student)}
 
 
 class StudentDataProvider(ABC):
@@ -48,13 +51,6 @@ class FakeStudentDataProvider(StudentDataProvider):
             return []
 
         return [
-            Student(
-                salesforce_id=item.get("salesforce_id"),
-                first_name=item.get("first_name", ""),
-                last_name=item.get("last_name", ""),
-                email=item.get("email", ""),
-                phone=item.get("phone", ""),
-                has_signed_up_for_text=item.get("has_signed_up_for_text", False),
-            )
+            Student(**{k: v for k, v in item.items() if k in _STUDENT_FIELD_NAMES})
             for item in raw_data
         ]
