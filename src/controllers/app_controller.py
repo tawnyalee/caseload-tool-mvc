@@ -504,36 +504,55 @@ class AppController:
         btn_save.pack(side="right")
 
     def handle_delete_group(self, group_name: str) -> None:
-        """Deletes a group after confirmation and updates UI state."""
+        """Deletes a group and any actions assigned to it, after confirmation."""
         # Guard against deleting default/protected group
         if group_name == "General":
             messagebox.showwarning("Delete Group", "The default 'General' group cannot be deleted.")
             return
 
-        confirm = messagebox.askokcancel(
-            "Delete Group Warning",
+        target_group = next((g for g in self.groups if g.name == group_name), None)
+        actions_in_group = (
+            [a for a in self.action_repo.load_actions() if a.group_id == target_group.id]
+            if target_group else []
+        )
+
+        warning = (
             f"❌ Are you sure you want to delete this group?\n\n"
             f"Group: {group_name}\n\n"
-            f"This action cannot be undone!"
         )
+        if actions_in_group:
+            warning += (
+                f"This will also permanently delete {len(actions_in_group)} "
+                f"action(s) assigned to this group.\n\n"
+            )
+        warning += "This action cannot be undone!"
+
+        confirm = messagebox.askokcancel("Delete Group Warning", warning)
 
         if confirm:
             success = self.group_repo.delete_group(group_name)
             if success:
-                # Reload updated group data
+                # Cascade: a deleted group's actions can't be reassigned to
+                # another group without risking silent, confusing behavior,
+                # so they're deleted along with it rather than orphaned.
+                for action in actions_in_group:
+                    self.action_repo.delete_action(action.id)
+                    self.group_repo.clear_welcome_action_id(action.id)
+
+                # Reload updated group/action data
                 self.groups = self.group_repo.load_groups()
+                self._reload_scenarios_dict()
 
-                # Refresh Navigation Dropdown and View
+                # Refresh Navigation Dropdown and View (falls back to
+                # 'General' automatically since group_name is no longer
+                # in the group list)
                 if self.nav_panel:
-                    self.nav_panel.groups = self.groups
-                    group_names = [g.name for g in self.groups]
-                    self.nav_panel.group_dropdown.configure(values=group_names)
-                    
-                    # Switch selected group back to 'General' safely
-                    self.nav_panel.group_dropdown.set("General")
-                    self.nav_panel.refresh_active_group_display("General")
+                    self.nav_panel.refresh_data(self.groups, self.scenarios_raw)
 
-                self.activity_logger.log(f"Deleted group '{group_name}'")
+                log_msg = f"Deleted group '{group_name}'"
+                if actions_in_group:
+                    log_msg += f" and {len(actions_in_group)} associated action(s)"
+                self.activity_logger.log(log_msg)
                 messagebox.showinfo("Success", f"Group '{group_name}' was successfully deleted.")
             else:
                 messagebox.showerror("Error", f"Could not find group '{group_name}' to delete.")

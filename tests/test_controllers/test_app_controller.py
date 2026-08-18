@@ -9,6 +9,9 @@ sys.path.insert(0, str(project_root / "src"))
 
 from controllers.app_controller import AppController
 from models.group import Group
+from models.action import Action
+from services.group_repository import GroupRepository
+from services.action_repository import ActionRepository
 
 
 def test_handle_add_action_clicked_reads_nav_panel_group():
@@ -118,3 +121,35 @@ def test_save_action_replaces_existing_welcome_action_cancelled(mock_askyesno, m
     assert success is False
     assert mock_askyesno.called
     assert group.welcome_action_id == "ACT-100"  # Unchanged
+
+
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch("src.controllers.app_controller.messagebox.askokcancel", return_value=True)
+@patch("src.controllers.app_controller.messagebox.showinfo")
+def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, mock_ctk, mock_init_views, tmp_path):
+    """Deleting a group must also delete the actions assigned to it, rather
+    than leaving them pointing at a group_id that no longer exists."""
+    controller = AppController()
+    # Isolate this test from the developer's real local data/*.json files.
+    controller.group_repo = GroupRepository(data_file=tmp_path / "groups.json")
+    controller.action_repo = ActionRepository(data_file=tmp_path / "actions.json")
+
+    group = controller.group_repo.add_group("Group To Delete")
+    controller.groups = [group]
+
+    doomed_action = Action(name="Orphan Candidate", group_id=group.id)
+    kept_action = Action(name="Unrelated Action", group_id="some-other-group-id")
+    controller.action_repo.save_action(doomed_action)
+    controller.action_repo.save_action(kept_action)
+
+    controller.nav_panel = MagicMock()
+
+    controller.handle_delete_group(group.name)
+
+    remaining_action_ids = {a.id for a in controller.action_repo.load_actions()}
+    assert doomed_action.id not in remaining_action_ids
+    assert kept_action.id in remaining_action_ids
+
+    remaining_group_names = {g.name for g in controller.group_repo.load_groups()}
+    assert group.name not in remaining_group_names
