@@ -55,11 +55,9 @@ def test_add_action_view_prioritizes_action_data_group_on_edit(ctk_root):
     mock_controller = MockController()
     groups = ["Group A", "Group B", "Group C"]
     dummy_action_data = {
-        "metadata": {
-            "assigned_group": "Group C"
-        }
+        "group_name": "Group C"
     }
-    
+
     view = AddActionView(
         master=ctk_root,
         controller=mock_controller,
