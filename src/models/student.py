@@ -58,7 +58,6 @@ class Student:
     last_pre_assessment_status: str = ""
     last_objective_assessment_status: str = ""
     last_sm_contact: str = ""
-    latest_course_note: str = ""
     latest_task: str = ""
     latest_task_attempts: str = ""
     latest_task_date: str = ""
@@ -139,7 +138,6 @@ class Student:
         "last_pre_assessment_status": "LastPreAssessmentStatus",
         "last_objective_assessment_status": "LastObjectiveAssessmentStatus",
         "last_sm_contact": "LastSMContact",
-        "latest_course_note": "LatestCourseNote",
         "latest_task": "LatestTask",
         "latest_task_attempts": "LatestTaskAttempts",
         "latest_task_date": "LatestTaskDate",
