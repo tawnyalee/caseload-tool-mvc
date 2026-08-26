@@ -38,20 +38,11 @@ class Student:
     task_4: str = ""
     last_pre_assessment_date: str = ""
     last_objective_assessment_date: str = ""
-    mentor_name: str = ""
-    course_mentor: str = ""
     days_since_last_course_contact: str = ""
-    contact_term: str = ""
-    term_completed_cu: str = ""
     my_course_contact: str = ""
     actual_start_date: str = ""
-    affiliation: str = ""
-    affiliation_code: str = ""
     assignment_start_date: str = ""
-    city: str = ""
     course_status: str = ""
-    enrolled_cu: str = ""
-    is_minor: str = ""
     latest_task_date_yesterday: str = ""
     last_academic_activity_date: str = ""
     last_objective_assessment_actual_date: str = ""
@@ -66,9 +57,7 @@ class Student:
     number_of_days_since_last_task_date: str = ""
     program_name: str = ""
     program_version: str = ""
-    planned_graduation_date: str = ""
     term_remaining_cu: str = ""
-    student_graduation_goal: str = ""
     student_status: str = ""
     task_5: str = ""
     task_6: str = ""
@@ -83,13 +72,10 @@ class Student:
     task_15: str = ""
     term_break_end_date: str = ""
     term_days_left: str = ""
-    term_otp_status: str = ""
     term_sap: str = ""
     term_start_date: str = ""
     texting_preference: str = ""
     timezone: str = ""
-    total_sap: str = ""
-    weeks_in_course: str = ""
 
     # Locally computed, NOT sourced from Salesforce - there is no Salesforce
     # field for "which task number is latest" (LatestTask/LatestTaskStatus/
@@ -126,20 +112,11 @@ class Student:
         "task_4": "Task4",
         "last_pre_assessment_date": "LastPreAssessmentDate",
         "last_objective_assessment_date": "LastObjectiveAssessmentDate",
-        "mentor_name": "MentorName",
-        "course_mentor": "CourseMentor",
         "days_since_last_course_contact": "DaysSinceLastCourseContact",
-        "contact_term": "contactterm",
-        "term_completed_cu": "TermCompletedCU",
         "my_course_contact": "MyCourseContact",
         "actual_start_date": "ActualStartDate",
-        "affiliation": "Affiliation",
-        "affiliation_code": "AffiliationCode",
         "assignment_start_date": "caseload.AssignmentStartDate__c",
-        "city": "City",
         "course_status": "CourseStatus",
-        "enrolled_cu": "EnrolledCU",
-        "is_minor": "IsMinor",
         "latest_task_date_yesterday": "LatestTaskDateYesterday",
         "last_academic_activity_date": "LastAcademicActivityDate",
         "last_objective_assessment_actual_date": "LastObjectiveAssessmentActualDate",
@@ -154,9 +131,7 @@ class Student:
         "number_of_days_since_last_task_date": "NumberOfDaysSinceLastTaskDate",
         "program_name": "ProgramName",
         "program_version": "ProgramVersion",
-        "planned_graduation_date": "PlannedGraduationDate",
         "term_remaining_cu": "TermRemainingCU",
-        "student_graduation_goal": "StudentGraduationGoal",
         "student_status": "StudentStatus",
         "task_5": "Task5",
         "task_6": "Task6",
@@ -171,13 +146,10 @@ class Student:
         "task_15": "Task15",
         "term_break_end_date": "TBenddate",
         "term_days_left": "TermDaysLeft",
-        "term_otp_status": "TermOTPStatus",
         "term_sap": "TermSAP",
         "term_start_date": "TermStartDate",
         "texting_preference": "TextingPreference",
         "timezone": "Timezone",
-        "total_sap": "TotalSAP",
-        "weeks_in_course": "weeksincourse",
     }
 
     @property
