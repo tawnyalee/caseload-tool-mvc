@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List
 
 from src.models.student import Student
+from src.services.task_utils import get_latest_task_number
 
 _STUDENT_FIELD_NAMES = {f.name for f in fields(Student)}
 
@@ -50,7 +51,10 @@ class FakeStudentDataProvider(StudentDataProvider):
         except (json.JSONDecodeError, FileNotFoundError):
             return []
 
-        return [
+        students = [
             Student(**{k: v for k, v in item.items() if k in _STUDENT_FIELD_NAMES})
             for item in raw_data
         ]
+        for student in students:
+            student.latest_task_number = get_latest_task_number(student)
+        return students

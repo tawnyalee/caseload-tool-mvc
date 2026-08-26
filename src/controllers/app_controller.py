@@ -355,25 +355,45 @@ class AppController:
 
         dialog = ctk.CTkToplevel(main_win)
         dialog.title("Group Manager")
-        dialog.geometry("350x180")
+        dialog.geometry("350x260")
         dialog.transient(main_win)
         dialog.grab_set()
         dialog.resizable(False, False)
 
         header_lbl = ctk.CTkLabel(
-            dialog, 
-            text="Add New Group", 
+            dialog,
+            text="Add New Group",
             font=ctk.CTkFont(size=16, weight="bold")
         )
         header_lbl.pack(pady=(15, 10), padx=20, anchor="w")
 
         group_name_entry = ctk.CTkEntry(
-            dialog, 
+            dialog,
             placeholder_text="Enter group name (e.g., Tier 1 Support)",
             width=310
         )
         group_name_entry.pack(pady=10, padx=20, fill="x")
         group_name_entry.focus()
+
+        has_tasks_var = ctk.StringVar(value="off")
+        has_tasks_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text="This course has tasks",
+            variable=has_tasks_var,
+            onvalue="on",
+            offvalue="off",
+        )
+        has_tasks_checkbox.pack(pady=(5, 5), padx=20, anchor="w")
+
+        has_oa_var = ctk.StringVar(value="off")
+        has_oa_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text="This course has an objective assessment",
+            variable=has_oa_var,
+            onvalue="on",
+            offvalue="off",
+        )
+        has_oa_checkbox.pack(pady=(0, 10), padx=20, anchor="w")
 
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
@@ -392,7 +412,11 @@ class AppController:
         def save_new_group():
             entered_name = group_name_entry.get().strip()
             if entered_name:
-                new_group = self.group_repo.add_group(entered_name)
+                new_group = self.group_repo.add_group(
+                    entered_name,
+                    has_tasks=has_tasks_var.get() == "on",
+                    has_objective_assessment=has_oa_var.get() == "on",
+                )
                 if new_group:
                     self.groups = self.group_repo.load_groups()
                     

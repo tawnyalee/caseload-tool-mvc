@@ -44,3 +44,22 @@ def test_shipped_fake_fixture_loads_cleanly():
     assert len(students) >= 1
     assert all(isinstance(s, Student) for s in students)
     assert all(s.email for s in students)
+
+
+def test_get_students_computes_latest_task_number(tmp_path):
+    """latest_task_number isn't stored in the JSON fixture - it must be
+    computed fresh every load, since it's derived from task_1..task_15."""
+    fixture = tmp_path / "fake_students.json"
+    fixture.write_text(
+        '[{"salesforce_id": "SF1", "first_name": "Jane", "last_name": "Doe", '
+        '"email": "jane@example.test", "task_1": "2026-01-01 (1)", "task_2": "2026-01-08 (1)"},'
+        '{"salesforce_id": "SF2", "first_name": "John", "last_name": "Roe", '
+        '"email": "john@example.test"}]',
+        encoding="utf-8",
+    )
+
+    provider = FakeStudentDataProvider(file_path=str(fixture))
+    students = provider.get_students()
+
+    assert students[0].latest_task_number == 2
+    assert students[1].latest_task_number is None

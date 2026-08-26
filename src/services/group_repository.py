@@ -30,7 +30,9 @@ class GroupRepository:
                         name=item["name"],
                         scenarios=item.get("scenarios", []),
                         welcome_action_id=item.get("welcome_action_id"),
-                        group_id=item.get("id")
+                        group_id=item.get("id"),
+                        has_tasks=item.get("has_tasks", False),
+                        has_objective_assessment=item.get("has_objective_assessment", False),
                     )
                     for item in raw_data
                 ]
@@ -44,22 +46,33 @@ class GroupRepository:
                 "id": g.id,
                 "name": g.name,
                 "scenarios": g.scenarios,
-                "welcome_action_id": g.welcome_action_id
+                "welcome_action_id": g.welcome_action_id,
+                "has_tasks": g.has_tasks,
+                "has_objective_assessment": g.has_objective_assessment,
             }
             for g in groups
         ]
         with open(self.data_file, "w", encoding="utf-8") as f:
             json.dump(serialized, f, indent=4)
 
-    def add_group(self, group_name: str) -> Optional[Group]:
+    def add_group(
+        self,
+        group_name: str,
+        has_tasks: bool = False,
+        has_objective_assessment: bool = False,
+    ) -> Optional[Group]:
         """Creates a new Group, saves it to groups.json, and returns the new Group."""
         groups = self.load_groups()
-        
+
         # Check if group name already exists (case-insensitive)
         if any(g.name.strip().lower() == group_name.strip().lower() for g in groups):
             return None
 
-        new_group = Group(name=group_name.strip())
+        new_group = Group(
+            name=group_name.strip(),
+            has_tasks=has_tasks,
+            has_objective_assessment=has_objective_assessment,
+        )
         groups.append(new_group)
         self.save_groups(groups)
         return new_group

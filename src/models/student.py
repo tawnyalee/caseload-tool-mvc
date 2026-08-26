@@ -1,5 +1,6 @@
 # src/models/student.py
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -89,6 +90,14 @@ class Student:
     timezone: str = ""
     total_sap: str = ""
     weeks_in_course: str = ""
+
+    # Locally computed, NOT sourced from Salesforce - there is no Salesforce
+    # field for "which task number is latest" (LatestTask/LatestTaskStatus/
+    # LatestTaskDate only give the date/status of whichever task is latest,
+    # not its number). Filled in by whichever StudentDataProvider builds
+    # this Student (see src/services/task_utils.get_latest_task_number),
+    # not part of SALESFORCE_FIELD_MAP below since it has no source field.
+    latest_task_number: Optional[int] = None
 
     # snake_case attribute name -> raw column name from the caseload export
     # (which mirrors the underlying Salesforce field/API names). Kept so a
