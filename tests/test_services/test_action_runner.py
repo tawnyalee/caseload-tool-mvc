@@ -48,7 +48,7 @@ def _make_runner(tmp_path, students, email_fail_for=None, text_fail_for=None, no
     return runner, template, email_sender, text_sender, note_writer
 
 
-def _make_action(template_id, is_email=True, is_text=True, has_note=True, follow_up_note=""):
+def _make_action(template_id, is_email=True, is_text=True, has_note=True, follow_up_note="", filters=None):
     return Action(
         name="Welcome Action",
         group_id="G1",
@@ -62,6 +62,7 @@ def _make_action(template_id, is_email=True, is_text=True, has_note=True, follow
         note_subject="Contacted" if has_note else "",
         note_body="Reached out to student" if has_note else "",
         follow_up_note=follow_up_note,
+        filters=filters,
     )
 
 
@@ -76,6 +77,31 @@ def test_all_steps_succeed(tmp_path):
     assert summary.succeeded == 9
     assert summary.failed == 0
     assert summary.skipped == 0
+
+
+def test_run_only_processes_students_matching_the_actions_filters(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    action = _make_action(
+        template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}]
+    )
+
+    summary = runner.run(action, group_name="Test Group")
+
+    # Only Jane matches - 1 student x (email + text + note) = 3 successful steps
+    assert summary.succeeded == 3
+    assert len(email_sender.sent) == 1
+    assert email_sender.sent[0]["to"] == "jane@example.test"
+
+
+def test_run_with_no_filters_processes_the_full_roster(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, filters=[])
+
+    summary = runner.run(action, group_name="Test Group")
+
+    assert summary.succeeded == 9  # unchanged - same as no filters at all
 
 
 def test_one_failed_communication_channel_still_leaves_a_note(tmp_path):

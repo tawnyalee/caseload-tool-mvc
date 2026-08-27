@@ -23,6 +23,7 @@ from src.models.group import Group
 from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
 from src.services.email_sender import EmailSender
+from src.services.filter_engine import matches_student
 from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
@@ -87,7 +88,12 @@ class ActionRunner:
             template_label = template.name if template else "MISSING/UNKNOWN"
             self.activity_logger.log(f"Using email template: '{template_label}' (id={action.template_id})")
 
-        students = self.student_provider.get_students()
+        all_students = self.student_provider.get_students()
+        students = [s for s in all_students if matches_student(s, action.filters)]
+        if action.filters:
+            self.activity_logger.log(
+                f"Filters matched {len(students)} of {len(all_students)} students"
+            )
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         summary = ActionRunSummary()
 
