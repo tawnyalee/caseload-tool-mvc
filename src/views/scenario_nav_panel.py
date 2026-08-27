@@ -89,7 +89,7 @@ class ScenarioNavPanel(ctk.CTkFrame):
         self.add_group_btn = ctk.CTkButton(self.crud_frame, text="+ Add Group", width=90, command=self._add_group)
         self.add_group_btn.pack(side="left", padx=(0, 4))
 
-        self.rename_group_btn = ctk.CTkButton(self.crud_frame, text="📝 Rename", width=90, command=self._rename_group)
+        self.rename_group_btn = ctk.CTkButton(self.crud_frame, text="📝 Edit Group", width=90, command=self._rename_group)
         self.rename_group_btn.pack(side="left", padx=4)
 
         self.delete_group_btn = ctk.CTkButton(self.crud_frame, text="❌ Delete", width=90, command=self._delete_group)

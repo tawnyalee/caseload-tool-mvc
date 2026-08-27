@@ -489,28 +489,35 @@ class AppController:
         btn_save.pack(side="right")
 
     def handle_rename_group(self, group_name: str) -> None:
+        """Opens the group editor — name plus has_tasks/has_objective_assessment,
+        the only per-group settings the app has today."""
         if group_name == "General":
-            messagebox.showwarning("Rename Group", "The default 'General' group cannot be renamed.")
+            messagebox.showwarning("Edit Group", "The default 'General' group cannot be edited.")
+            return
+
+        target_group = next((g for g in self.groups if g.name == group_name), None)
+        if not target_group:
+            messagebox.showerror("Error", f"Could not find group '{group_name}' to edit.")
             return
 
         main_win = self.right_workspace.winfo_toplevel()
 
         dialog = ctk.CTkToplevel(main_win)
         dialog.title("Group Manager")
-        dialog.geometry("350x180")
+        dialog.geometry("350x260")
         dialog.transient(main_win)
         dialog.grab_set()
         dialog.resizable(False, False)
 
         header_lbl = ctk.CTkLabel(
-            dialog, 
-            text="Rename Group", 
+            dialog,
+            text="Edit Group",
             font=ctk.CTkFont(size=16, weight="bold")
         )
         header_lbl.pack(pady=(15, 10), padx=20, anchor="w")
 
         group_name_entry = ctk.CTkEntry(
-            dialog, 
+            dialog,
             placeholder_text="Enter group name",
             width=310
         )
@@ -519,52 +526,66 @@ class AppController:
         group_name_entry.focus()
         group_name_entry.select_range(0, 'end')
 
+        has_tasks_var = ctk.StringVar(value="on" if target_group.has_tasks else "off")
+        has_tasks_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text="This course has tasks",
+            variable=has_tasks_var,
+            onvalue="on",
+            offvalue="off",
+        )
+        has_tasks_checkbox.pack(pady=(5, 5), padx=20, anchor="w")
+
+        has_oa_var = ctk.StringVar(value="on" if target_group.has_objective_assessment else "off")
+        has_oa_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text="This course has an objective assessment",
+            variable=has_oa_var,
+            onvalue="on",
+            offvalue="off",
+        )
+        has_oa_checkbox.pack(pady=(0, 10), padx=20, anchor="w")
+
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
 
         btn_cancel = ctk.CTkButton(
-            btn_frame, 
-            text="Cancel", 
-            width=100, 
-            fg_color="transparent", 
+            btn_frame,
+            text="Cancel",
+            width=100,
+            fg_color="transparent",
             border_width=1,
             text_color=("black", "white"),
             command=dialog.destroy
         )
         btn_cancel.pack(side="left")
 
-        def save_renamed_group():
+        def save_edited_group():
             new_name = group_name_entry.get().strip()
             if not new_name:
                 group_name_entry.configure(border_color="red")
                 return
 
-            if new_name == group_name:
-                dialog.destroy()
-                return
+            target_group.name = new_name
+            target_group.has_tasks = has_tasks_var.get() == "on"
+            target_group.has_objective_assessment = has_oa_var.get() == "on"
+            self.group_repo.save_groups(self.groups)
 
-            target_group = next((g for g in self.groups if g.name == group_name), None)
-            if target_group:
-                target_group.name = new_name
-                self.group_repo.save_groups(self.groups)
+            if self.nav_panel:
+                self.nav_panel.groups = self.groups
+                group_names = [g.name for g in self.groups]
+                self.nav_panel.group_dropdown.configure(values=group_names)
+                self.nav_panel.group_dropdown.set(new_name)
+                self.nav_panel.refresh_active_group_display(new_name)
 
-                if self.nav_panel:
-                    self.nav_panel.groups = self.groups
-                    group_names = [g.name for g in self.groups]
-                    self.nav_panel.group_dropdown.configure(values=group_names)
-                    self.nav_panel.group_dropdown.set(new_name)
-                    self.nav_panel.refresh_active_group_display(new_name)
-
-                self.activity_logger.log(f"Renamed group '{group_name}' to '{new_name}'")
-                dialog.destroy()
-            else:
-                messagebox.showerror("Error", f"Could not find group '{group_name}' to rename.")
+            self.activity_logger.log(f"Edited group '{group_name}' (now '{new_name}')")
+            dialog.destroy()
 
         btn_save = ctk.CTkButton(
-            btn_frame, 
-            text="Save", 
+            btn_frame,
+            text="Save",
             width=100,
-            command=save_renamed_group
+            command=save_edited_group
         )
         btn_save.pack(side="right")
 

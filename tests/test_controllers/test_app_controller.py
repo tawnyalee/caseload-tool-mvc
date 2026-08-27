@@ -156,6 +156,32 @@ def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, m
     assert group.name not in remaining_group_names
 
 
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_handle_rename_group_refuses_to_edit_general(mock_showwarning, mock_ctk, mock_init_views):
+    """'General' can't be edited at all (same protection as rename/delete) -
+    execution must never reach real dialog construction for it."""
+    controller = AppController()
+    controller.groups = [Group(name="General", group_id="G1")]
+
+    controller.handle_rename_group("General")
+
+    mock_showwarning.assert_called_once()
+
+
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch("src.controllers.app_controller.messagebox.showerror")
+def test_handle_rename_group_reports_a_missing_group_without_opening_a_dialog(mock_showerror, mock_ctk, mock_init_views):
+    controller = AppController()
+    controller.groups = []  # the requested group doesn't exist
+
+    controller.handle_rename_group("Nonexistent Group")
+
+    mock_showerror.assert_called_once()
+
+
 @patch("src.controllers.app_controller.messagebox.showinfo")
 def test_handle_send_ad_hoc_email_passes_note_fields_through_and_shows_showinfo(mock_showinfo):
     controller = MagicMock()
