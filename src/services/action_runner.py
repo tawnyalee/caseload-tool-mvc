@@ -145,7 +145,11 @@ class ActionRunner:
 
             if has_note_content:
                 if email_ok or text_ok:
-                    summary.results.append(self._attempt_note(student, action))
+                    summary.results.append(
+                        self._attempt_note(
+                            student, action.note_subject, action.note_body, action.follow_up_note
+                        )
+                    )
                 else:
                     detail = "No successful communication for this student"
                     self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
@@ -219,18 +223,45 @@ class ActionRunner:
         )
         return batch_summary
 
-    def send_ad_hoc_email(self, subject: str, body: str, signature: str = "") -> ActionRunSummary:
+    def send_ad_hoc_email(
+        self,
+        subject: str,
+        body: str,
+        signature: str = "",
+        note_subject: str = "",
+        note_body: str = "",
+        follow_up_note: str = "",
+    ) -> ActionRunSummary:
         """Sends a one-off email (not tied to any saved Action or template) to
-        every student from the provider — e.g. a class cancellation notice."""
+        every student from the provider — e.g. a class cancellation notice.
+        Note handling is identical to a regular Action's note step: only
+        attempted for a student the email succeeded for, skipped (not
+        attempted) otherwise, and only if note_subject/note_body/
+        follow_up_note actually has content."""
         self.activity_logger.log(f"Starting ad-hoc email send — Subject: '{subject}'")
         students = self.student_provider.get_students()
+        has_note_content = bool(note_subject or note_body or follow_up_note)
         summary = ActionRunSummary()
 
         for student in students:
-            summary.results.append(self._send_email(student, subject, body, signature))
+            result = self._send_email(student, subject, body, signature)
+            summary.results.append(result)
+
+            if has_note_content:
+                if result.outcome == "success":
+                    summary.results.append(
+                        self._attempt_note(student, note_subject, note_body, follow_up_note)
+                    )
+                else:
+                    detail = "No successful communication for this student"
+                    self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                    summary.results.append(
+                        StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
+                    )
 
         self.activity_logger.log(
-            f"Ad-hoc send complete — {summary.succeeded} succeeded, {summary.failed} failed"
+            f"Ad-hoc send complete — {summary.succeeded} succeeded, "
+            f"{summary.failed} failed, {summary.skipped} skipped"
         )
         return summary
 
@@ -256,15 +287,17 @@ class ActionRunner:
             self.activity_logger.log(f"[TEXT FAILED] {student.full_name} <{student.phone}>: {exc}")
             return StepResult(student=student, step_type="text", outcome="failed", detail=str(exc))
 
-    def _attempt_note(self, student: Student, action: Action) -> StepResult:
+    def _attempt_note(
+        self, student: Student, note_subject: str, note_body: str, follow_up_note: str
+    ) -> StepResult:
         try:
-            if action.note_subject or action.note_body:
+            if note_subject or note_body:
                 self.note_writer.write_note(
-                    salesforce_id=student.salesforce_id, subject=action.note_subject, body=action.note_body
+                    salesforce_id=student.salesforce_id, subject=note_subject, body=note_body
                 )
-            if action.follow_up_note:
+            if follow_up_note:
                 self.note_writer.update_follow_up_note(
-                    salesforce_id=student.salesforce_id, text=action.follow_up_note
+                    salesforce_id=student.salesforce_id, text=follow_up_note
                 )
             self.activity_logger.log(f"[NOTE] Written for {student.full_name}")
             return StepResult(student=student, step_type="note", outcome="success")

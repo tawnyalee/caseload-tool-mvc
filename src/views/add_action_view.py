@@ -114,21 +114,36 @@ class AddActionView(ctk.CTkFrame):
         self.id_display.grid(row=1, column=2, padx=10, pady=(0, 10), sticky="w")
 
         # --- Dynamic Filters Header ---
+        # Button sits directly under the title, left-aligned with it, and
+        # above the filter list — a small hint label explains that
+        # placement, since a "grows downward" list would normally push an
+        # append button off-screen if it sat below the (scrollable) list.
         filter_header_frame = ctk.CTkFrame(meta_frame, fg_color="transparent")
         filter_header_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=(10, 2), sticky="ew")
-        
+
         filter_title = ctk.CTkLabel(filter_header_frame, text="Select Filters for Roster:", font=ctk.CTkFont(size=12, weight="bold"))
-        filter_title.pack(side="left")
+        filter_title.pack(anchor="w")
+
+        filter_controls_frame = ctk.CTkFrame(filter_header_frame, fg_color="transparent")
+        filter_controls_frame.pack(fill="x", pady=(4, 0))
 
         self.btn_add_filter = ctk.CTkButton(
-            filter_header_frame, 
-            text="➕ Add Filter Rule", 
-            width=110, 
-            height=22, 
+            filter_controls_frame,
+            text="➕ Add Filter Rule",
+            width=110,
+            height=22,
             font=ctk.CTkFont(size=11),
             command=self._add_filter_row
         )
-        self.btn_add_filter.pack(side="right")
+        self.btn_add_filter.pack(side="left")
+
+        filter_hint = ctk.CTkLabel(
+            filter_controls_frame,
+            text="Click above to add a filter — it appears in the list below.",
+            font=ctk.CTkFont(size=10),
+            text_color="gray",
+        )
+        filter_hint.pack(side="left", padx=(10, 0))
 
         # --- Scrollable Container ---
         self.scrollable_container = ctk.CTkScrollableFrame(self, orientation="vertical", fg_color="transparent")

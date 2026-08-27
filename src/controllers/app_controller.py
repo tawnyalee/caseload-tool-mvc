@@ -14,10 +14,9 @@ from src.services.student_data_provider import FakeStudentDataProvider
 from src.services.email_sender import FakeEmailSender
 from src.services.text_sender import FakeTextSender
 from src.services.note_writer import FakeNoteWriter
-from src.services.outlook_signature_provider import LocalOutlookSignatureProvider, get_signature_names_or_fallback
+from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
-from src.views.ad_hoc_email_modal import AdHocEmailModal
 from src.views.batch_run_modal import BatchRunModal
 
 class PlaceholderView(ctk.CTkFrame):
@@ -258,25 +257,30 @@ class AppController:
         else:
             messagebox.showinfo("Welcome Emails Sent", message)
 
-    def handle_compose_ad_hoc_email(self) -> None:
-        main_win = self.right_workspace.winfo_toplevel()
-        signature_names = get_signature_names_or_fallback(self.signature_provider)
-        AdHocEmailModal(
-            master=main_win,
-            on_send_callback=self._handle_ad_hoc_email_send,
-            signature_names=signature_names,
+    def handle_send_ad_hoc_email(
+        self,
+        subject: str,
+        body: str,
+        signature: str = "",
+        note_subject: str = "",
+        note_body: str = "",
+        follow_up_note: str = "",
+    ) -> None:
+        """Called directly by DashboardView's inline compose section (no
+        modal - the email and note fields live on the dashboard itself)."""
+        summary = self.action_runner.send_ad_hoc_email(
+            subject, body, signature,
+            note_subject=note_subject, note_body=note_body, follow_up_note=follow_up_note,
         )
-
-    def _handle_ad_hoc_email_send(self, subject: str, body: str, signature: str = "") -> None:
-        summary = self.action_runner.send_ad_hoc_email(subject, body, signature)
 
         message = (
             f"Ad-hoc email complete:\n\n"
             f"✅ Succeeded: {summary.succeeded}\n"
-            f"❌ Failed: {summary.failed}\n\n"
+            f"❌ Failed: {summary.failed}\n"
+            f"⏭ Skipped: {summary.skipped}\n\n"
             f"See the Live Application Log for full details."
         )
-        if summary.failed:
+        if summary.failed or summary.skipped:
             messagebox.showwarning("Send Complete — Review Needed", message)
         else:
             messagebox.showinfo("Send Complete", message)

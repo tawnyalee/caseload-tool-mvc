@@ -157,6 +157,38 @@ def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, m
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")
+def test_handle_send_ad_hoc_email_passes_note_fields_through_and_shows_showinfo(mock_showinfo):
+    controller = MagicMock()
+    controller.action_runner.send_ad_hoc_email.return_value = ActionRunSummary()
+
+    handle_send = AppController.handle_send_ad_hoc_email.__get__(controller, AppController)
+    handle_send(
+        subject="Class Canceled", body="<p>No class today.</p>", signature="Sig",
+        note_subject="Broadcast sent", note_body="Notified", follow_up_note="See broadcast",
+    )
+
+    controller.action_runner.send_ad_hoc_email.assert_called_once_with(
+        "Class Canceled", "<p>No class today.</p>", "Sig",
+        note_subject="Broadcast sent", note_body="Notified", follow_up_note="See broadcast",
+    )
+    mock_showinfo.assert_called_once()
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_handle_send_ad_hoc_email_shows_showwarning_on_failures(mock_showwarning):
+    controller = MagicMock()
+    failed_summary = ActionRunSummary(
+        results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
+    )
+    controller.action_runner.send_ad_hoc_email.return_value = failed_summary
+
+    handle_send = AppController.handle_send_ad_hoc_email.__get__(controller, AppController)
+    handle_send(subject="Class Canceled", body="<p>No class today.</p>")
+
+    mock_showwarning.assert_called_once()
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
 def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_showinfo):
     controller = MagicMock()
     batch_summary = BatchRunSummary(items=[

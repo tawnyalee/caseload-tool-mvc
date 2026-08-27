@@ -392,3 +392,69 @@ def test_send_ad_hoc_email_reaches_every_student_and_isolates_failures(tmp_path)
     assert summary.failed == 1
     assert len(email_sender.sent) == 2
     assert all(e["subject"] == "Class Canceled" for e in email_sender.sent)
+
+
+def test_send_ad_hoc_email_with_no_note_content_writes_no_notes(tmp_path):
+    students = _make_students()
+    note_writer = FakeNoteWriter()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=FakeEmailSender(),
+        text_sender=FakeTextSender(),
+        note_writer=note_writer,
+        template_repo=TemplateRepository(file_path=str(tmp_path / "templates.json")),
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    runner.send_ad_hoc_email(subject="Class Canceled", body="<p>No class today.</p>")
+
+    assert note_writer.written == []
+    assert note_writer.follow_up_notes == {}
+
+
+def test_send_ad_hoc_email_writes_an_identical_note_to_a_regular_actions_note_step(tmp_path):
+    students = _make_students()
+    note_writer = FakeNoteWriter()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=FakeEmailSender(),
+        text_sender=FakeTextSender(),
+        note_writer=note_writer,
+        template_repo=TemplateRepository(file_path=str(tmp_path / "templates.json")),
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    summary = runner.send_ad_hoc_email(
+        subject="Class Canceled",
+        body="<p>No class today.</p>",
+        note_subject="Broadcast sent",
+        note_body="Notified of class cancellation",
+        follow_up_note="Class canceled - see broadcast",
+    )
+
+    # 3 students x (email + note) = 6 successful steps
+    assert summary.succeeded == 6
+    assert len(note_writer.written) == 3
+    assert all(n["subject"] == "Broadcast sent" for n in note_writer.written)
+    assert all(text == "Class canceled - see broadcast" for text in note_writer.follow_up_notes.values())
+
+
+def test_send_ad_hoc_email_skips_the_note_for_a_student_whose_email_failed(tmp_path):
+    students = _make_students()
+    note_writer = FakeNoteWriter()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=FakeEmailSender(fail_for={"jane@example.test"}),
+        text_sender=FakeTextSender(),
+        note_writer=note_writer,
+        template_repo=TemplateRepository(file_path=str(tmp_path / "templates.json")),
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    summary = runner.send_ad_hoc_email(
+        subject="Class Canceled", body="<p>No class today.</p>", note_subject="Broadcast sent",
+    )
+
+    assert summary.failed == 1  # Jane's email
+    assert summary.skipped == 1  # Jane's note, skipped rather than attempted
+    assert len(note_writer.written) == 2  # John and Amy only
