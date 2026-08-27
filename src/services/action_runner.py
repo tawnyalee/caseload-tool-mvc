@@ -12,11 +12,15 @@ the run; every step (success, failure, or skip) is logged via ActivityLogger
 and collected into the final summary.
 
 run_welcome_emails() runs every group's designated welcome action and
-aggregates them into one summary. send_ad_hoc_email() sends a one-off,
-non-template email to every student (e.g. a class cancellation notice).
+aggregates them into one summary. run_batch() is the general form of that
+same pattern — any professor-selected list of (action, group_name) pairs,
+run in order, one action's failure isolated from the rest exactly like a
+single student's failure is isolated within run(). send_ad_hoc_email()
+sends a one-off, non-template email to every student (e.g. a class
+cancellation notice).
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.models.action import Action
 from src.models.group import Group
@@ -61,6 +65,34 @@ class ActionRunSummary:
     @property
     def skipped_steps(self) -> List[StepResult]:
         return [r for r in self.results if r.outcome == "skipped"]
+
+
+@dataclass
+class BatchItemResult:
+    action_name: str
+    group_name: str
+    summary: ActionRunSummary
+    error: Optional[str] = None  # set only if the action's run() itself raised, not per-student failures
+
+
+@dataclass
+class BatchRunSummary:
+    """Itemized per action, not just one blended total — batch members
+    typically target different groups/subsets, so a combined-only number
+    would hide which specific action needs attention."""
+    items: List[BatchItemResult] = field(default_factory=list)
+
+    @property
+    def succeeded(self) -> int:
+        return sum(item.summary.succeeded for item in self.items)
+
+    @property
+    def failed(self) -> int:
+        return sum(item.summary.failed for item in self.items)
+
+    @property
+    def skipped(self) -> int:
+        return sum(item.summary.skipped for item in self.items)
 
 
 class ActionRunner:
@@ -151,6 +183,41 @@ class ActionRunner:
             f"{combined.failed} failed, {combined.skipped} skipped"
         )
         return combined
+
+    def run_batch(self, items: List[Tuple[Action, str]]) -> BatchRunSummary:
+        """Runs each (action, group_name) pair in `items`, in the order
+        given, one action's failure isolated from the rest — same
+        philosophy as run()'s per-student isolation, just one level up.
+        Per-student failures within a single action are already caught
+        inside run() and never raise; this additionally guards against an
+        action's run() itself raising unexpectedly, so one broken action
+        can't stop the whole batch."""
+        self.activity_logger.log(f"Starting batch run — {len(items)} action(s)")
+        batch_summary = BatchRunSummary()
+
+        for action, group_name in items:
+            try:
+                summary = self.run(action, group_name=group_name)
+                batch_summary.items.append(
+                    BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
+                )
+            except Exception as exc:
+                self.activity_logger.log(
+                    f"[BATCH ITEM FAILED] Action '{action.name}' (Group: '{group_name}'): {exc}"
+                )
+                batch_summary.items.append(
+                    BatchItemResult(
+                        action_name=action.name, group_name=group_name,
+                        summary=ActionRunSummary(), error=str(exc),
+                    )
+                )
+
+        self.activity_logger.log(
+            f"Batch run complete — {batch_summary.succeeded} succeeded, "
+            f"{batch_summary.failed} failed, {batch_summary.skipped} skipped "
+            f"across {len(items)} action(s)"
+        )
+        return batch_summary
 
     def send_ad_hoc_email(self, subject: str, body: str, signature: str = "") -> ActionRunSummary:
         """Sends a one-off email (not tied to any saved Action or template) to

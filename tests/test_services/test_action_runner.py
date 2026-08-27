@@ -293,6 +293,87 @@ def test_run_welcome_emails_aggregates_across_groups(tmp_path):
     assert summary.skipped == 0
 
 
+def test_run_batch_itemizes_results_per_action(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+
+    action_a = _make_action(
+        template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}]
+    )
+    action_a.name = "Action A"
+    action_b = _make_action(
+        template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "John"}]
+    )
+    action_b.name = "Action B"
+
+    batch_summary = runner.run_batch([(action_a, "Group A"), (action_b, "Group B")])
+
+    assert len(batch_summary.items) == 2
+    assert batch_summary.items[0].action_name == "Action A"
+    assert batch_summary.items[0].group_name == "Group A"
+    assert batch_summary.items[0].summary.succeeded == 3  # Jane: email + text + note
+    assert batch_summary.items[1].action_name == "Action B"
+    assert batch_summary.items[1].summary.succeeded == 3  # John: email + text + note
+    assert batch_summary.succeeded == 6  # combined total
+
+
+def test_run_batch_continues_after_one_action_raises(tmp_path, monkeypatch):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+
+    broken_action = _make_action(template.id)
+    broken_action.name = "Broken Action"
+    good_action = _make_action(
+        template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}]
+    )
+    good_action.name = "Good Action"
+
+    original_run = runner.run
+
+    def flaky_run(action, group_name):
+        if action.name == "Broken Action":
+            raise RuntimeError("boom")
+        return original_run(action, group_name)
+
+    monkeypatch.setattr(runner, "run", flaky_run)
+
+    batch_summary = runner.run_batch([(broken_action, "Group A"), (good_action, "Group B")])
+
+    assert len(batch_summary.items) == 2
+    assert batch_summary.items[0].error == "boom"
+    assert batch_summary.items[0].summary.succeeded == 0
+    assert batch_summary.items[1].error is None
+    assert batch_summary.items[1].summary.succeeded == 3
+
+
+def test_run_batch_preserves_given_order(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+
+    action_first = _make_action(template.id)
+    action_first.name = "First"
+    action_second = _make_action(template.id)
+    action_second.name = "Second"
+    action_third = _make_action(template.id)
+    action_third.name = "Third"
+
+    batch_summary = runner.run_batch(
+        [(action_third, "G"), (action_first, "G"), (action_second, "G")]
+    )
+
+    assert [item.action_name for item in batch_summary.items] == ["Third", "First", "Second"]
+
+
+def test_run_batch_with_empty_list_returns_empty_summary(tmp_path):
+    students = _make_students()
+    runner, *_ = _make_runner(tmp_path, students)
+
+    batch_summary = runner.run_batch([])
+
+    assert batch_summary.items == []
+    assert batch_summary.succeeded == 0
+
+
 def test_send_ad_hoc_email_reaches_every_student_and_isolates_failures(tmp_path):
     students = _make_students()
     email_sender = FakeEmailSender(fail_for={"jane@example.test"})

@@ -31,6 +31,15 @@ class DashboardView(ctk.CTkFrame):
         )
         self.btn_send_all.pack(side="left", padx=10)
 
+        self.btn_run_batch = ctk.CTkButton(
+            actions_frame,
+            text="🗂️ Run Action Batch",
+            height=40,
+            font=ctk.CTkFont(weight="bold"),
+            command=self._on_run_batch_clicked,
+        )
+        self.btn_run_batch.pack(side="left", padx=10)
+
     def _on_send_welcome_clicked(self):
         if self.controller and hasattr(self.controller, "handle_send_welcome_emails"):
             self.controller.handle_send_welcome_emails()
@@ -38,3 +47,7 @@ class DashboardView(ctk.CTkFrame):
     def _on_send_all_clicked(self):
         if self.controller and hasattr(self.controller, "handle_compose_ad_hoc_email"):
             self.controller.handle_compose_ad_hoc_email()
+
+    def _on_run_batch_clicked(self):
+        if self.controller and hasattr(self.controller, "handle_open_batch_runner"):
+            self.controller.handle_open_batch_runner()

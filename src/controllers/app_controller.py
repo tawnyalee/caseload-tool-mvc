@@ -18,6 +18,7 @@ from src.services.outlook_signature_provider import LocalOutlookSignatureProvide
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
 from src.views.ad_hoc_email_modal import AdHocEmailModal
+from src.views.batch_run_modal import BatchRunModal
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -279,6 +280,42 @@ class AppController:
             messagebox.showwarning("Send Complete — Review Needed", message)
         else:
             messagebox.showinfo("Send Complete", message)
+
+    def handle_open_batch_runner(self) -> None:
+        main_win = self.right_workspace.winfo_toplevel()
+        actions = self.action_repo.load_actions()
+        BatchRunModal(
+            master=main_win,
+            actions=actions,
+            groups=self.groups,
+            on_run=self._handle_run_batch,
+        )
+
+    def _handle_run_batch(self, actions, group_names) -> None:
+        items = list(zip(actions, group_names))
+        batch_summary = self.action_runner.run_batch(items)
+
+        lines = []
+        for item in batch_summary.items:
+            if item.error:
+                lines.append(f"⚠ {item.action_name} ({item.group_name}): ERROR — {item.error}")
+            else:
+                lines.append(
+                    f"• {item.action_name} ({item.group_name}): "
+                    f"✅ {item.summary.succeeded}  ❌ {item.summary.failed}  ⏭ {item.summary.skipped}"
+                )
+
+        message = (
+            f"Batch run complete — {len(batch_summary.items)} action(s):\n\n"
+            + "\n".join(lines)
+            + f"\n\nCombined: ✅ {batch_summary.succeeded}  ❌ {batch_summary.failed}  "
+            f"⏭ {batch_summary.skipped}\n\nSee the Live Application Log for full details."
+        )
+        has_issues = batch_summary.failed or any(item.error for item in batch_summary.items)
+        if has_issues:
+            messagebox.showwarning("Batch Run — Review Needed", message)
+        else:
+            messagebox.showinfo("Batch Run Complete", message)
 
     def handle_settings_requested(self) -> None:
         self.switch_workspace_view(

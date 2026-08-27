@@ -12,6 +12,7 @@ from models.group import Group
 from models.action import Action
 from services.group_repository import GroupRepository
 from services.action_repository import ActionRepository
+from services.action_runner import ActionRunSummary, BatchRunSummary, BatchItemResult, StepResult
 
 
 def test_handle_add_action_clicked_reads_nav_panel_group():
@@ -153,3 +154,89 @@ def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, m
 
     remaining_group_names = {g.name for g in controller.group_repo.load_groups()}
     assert group.name not in remaining_group_names
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_showinfo):
+    controller = MagicMock()
+    batch_summary = BatchRunSummary(items=[
+        BatchItemResult(action_name="Action A", group_name="Group A", summary=ActionRunSummary()),
+    ])
+    controller.action_runner.run_batch.return_value = batch_summary
+    action = MagicMock()
+
+    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch([action], ["Group A"])
+
+    controller.action_runner.run_batch.assert_called_once_with([(action, "Group A")])
+    mock_showinfo.assert_called_once()
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_showwarning):
+    controller = MagicMock()
+    batch_summary = BatchRunSummary(items=[
+        BatchItemResult(action_name="Broken", group_name="Group A", summary=ActionRunSummary(), error="boom"),
+    ])
+    controller.action_runner.run_batch.return_value = batch_summary
+
+    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch([MagicMock()], ["Group A"])
+
+    mock_showwarning.assert_called_once()
+    message = mock_showwarning.call_args[0][1]
+    assert "Broken" in message
+    assert "boom" in message
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_showwarning):
+    controller = MagicMock()
+    failed_summary = ActionRunSummary(
+        results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
+    )
+    batch_summary = BatchRunSummary(items=[
+        BatchItemResult(action_name="Action A", group_name="Group A", summary=failed_summary),
+    ])
+    controller.action_runner.run_batch.return_value = batch_summary
+
+    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch([MagicMock()], ["Group A"])
+
+    mock_showwarning.assert_called_once()
+
+
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch("controllers.app_controller.BatchRunModal")
+def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wired(
+    mock_modal, mock_ctk, mock_init_views, tmp_path
+):
+    """Uses a real AppController (same pattern as every other controller
+    test here) rather than a bare MagicMock 'self' - handle_open_batch_runner
+    calls winfo_toplevel() on right_workspace and hands the result to a real
+    CTkToplevel subclass as its master, which needs a real (if hidden)
+    widget behind it, not a MagicMock standing in for one.
+
+    Patch target note: this file imports AppController via
+    'controllers.app_controller' (no src. prefix - see sys.path.insert at
+    the top of this file), so a project-local name like BatchRunModal must
+    be patched on that exact module object to actually take effect; unlike
+    ctk/messagebox (shared third-party modules, patchable from either
+    prefix), patching 'src.controllers.app_controller.BatchRunModal'
+    silently patches a *different* module instance and leaves the real
+    class in place - which then tries to construct a real CTkToplevel with
+    a MagicMock as its master and hangs Tk's internals indefinitely."""
+    controller = AppController()
+    controller.action_repo = ActionRepository(data_file=tmp_path / "actions.json")
+    saved_action = controller.action_repo.save_action(Action(name="A1", group_id="G1"))
+    controller.groups = [Group(name="Group A", group_id="G1")]
+    controller.right_workspace = MagicMock()
+
+    controller.handle_open_batch_runner()
+
+    mock_modal.assert_called_once()
+    _, kwargs = mock_modal.call_args
+    assert [a.id for a in kwargs["actions"]] == [saved_action.id]
+    assert kwargs["groups"] == controller.groups
+    assert kwargs["on_run"] == controller._handle_run_batch
