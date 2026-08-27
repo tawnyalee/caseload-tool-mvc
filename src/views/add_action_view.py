@@ -2,6 +2,9 @@
 import uuid
 import customtkinter as ctk
 from src.views.template_editor_modal import TemplateEditorModal
+from src.views.filter_row import FilterRow
+from src.views.date_picker import DatePickerEntry
+from src.services.filterable_fields import FILTERABLE_FIELDS, Operator
 from src.services.outlook_signature_provider import get_signature_names_or_fallback
 import tkinter.messagebox as messagebox
 
@@ -31,6 +34,10 @@ class AddActionView(ctk.CTkFrame):
 
         # Real Outlook signature names from the controller, if available
         self.signature_provider = getattr(controller, "signature_provider", None)
+
+        # Used to populate live-dropdown filter fields (e.g. course_code)
+        # with whatever values actually exist in the current roster.
+        self.student_data_provider = getattr(controller, "student_data_provider", None)
 
         # Determine header title based on mode
         self.mode_title = "Edit Action" if self.action_data else "Add New Action"
@@ -349,6 +356,64 @@ class AddActionView(ctk.CTkFrame):
                 self.followup_note.delete(0, "end")
                 self.followup_note.insert(0, note_config["followup_note"])
 
+        # 8. Filters — replace the default blank row with one row per saved
+        # condition, so editing an action doesn't silently drop its filters.
+        for row in list(self.filter_rows):
+            row._handle_remove()
+
+        saved_filters = data.get("filters") or []
+        if saved_filters:
+            for condition in saved_filters:
+                self._add_filter_row()
+                self._apply_saved_condition_to_row(self.filter_rows[-1], condition)
+        else:
+            self._add_filter_row()
+
+    def _apply_saved_condition_to_row(self, row: FilterRow, condition: dict) -> None:
+        """Reconstructs a FilterRow's field/operator/value selection from a
+        previously saved condition dict."""
+        field_name = condition.get("field")
+        if not field_name or field_name not in FILTERABLE_FIELDS:
+            return
+        row.field_dropdown.set(field_name)
+        row._on_field_changed(field_name)
+
+        operator = condition.get("operator")
+        valid_operators = [op.value for op in FILTERABLE_FIELDS[field_name].operators]
+        if operator and operator in valid_operators:
+            row.operator_dropdown.set(operator)
+            row._on_operator_changed(operator)
+
+        value = condition.get("value")
+        if operator in (Operator.IS_EMPTY.value, Operator.IS_NOT_EMPTY.value) or value is None:
+            return
+
+        if operator == Operator.IS_ONE_OF.value:
+            if not row._value_widgets:
+                return
+            listbox = row._value_widgets[0]
+            wanted = set(value) if isinstance(value, list) else {value}
+            for index, item in enumerate(listbox.get(0, "end")):
+                if item in wanted:
+                    listbox.selection_set(index)
+            return
+
+        if operator == Operator.BETWEEN.value and isinstance(value, list) and len(value) == 2:
+            if len(row._value_widgets) >= 3:
+                row._value_widgets[0].entry.insert(0, str(value[0]))
+                row._value_widgets[2].entry.insert(0, str(value[1]))
+            return
+
+        if not row._value_widgets:
+            return
+        widget = row._value_widgets[0]
+        if isinstance(widget, DatePickerEntry):
+            widget.entry.insert(0, str(value))
+        elif hasattr(widget, "set"):
+            widget.set(str(value))
+        else:
+            widget.insert(0, str(value))
+
     def get_action_data(self) -> dict:
         """Gathers all current form field values into a dictionary compatible with both View and Controller schemas."""
         return {
@@ -394,12 +459,10 @@ class AddActionView(ctk.CTkFrame):
 
             # --- Dynamic Filters ---
             "filters": [
-                {
-                    "field": r["field"].get(),
-                    "operator": r["operator"].get(),
-                    "value": r["value"].get()
-                }
-                for r in self.filter_rows
+                condition
+                for row in self.filter_rows
+                for condition in [row.to_condition()]
+                if condition is not None
             ]
         }
 
@@ -407,40 +470,31 @@ class AddActionView(ctk.CTkFrame):
     # DYNAMIC FILTER & UI SECTION HELPERS
     # =========================================================================
     def _add_filter_row(self):
-        """Dynamically adds a filter rule row inside the filters container."""
-        row_frame = ctk.CTkFrame(self.filters_container, fg_color="transparent")
-        row_frame.pack(fill="x", pady=2)
-
-        field_dropdown = ctk.CTkComboBox(row_frame, values=["Lead Status", "State", "Account Type"], width=140)
-        field_dropdown.pack(side="left", padx=(0, 5))
-
-        op_dropdown = ctk.CTkComboBox(row_frame, values=["Equals", "Contains", "Not Equals"], width=110)
-        op_dropdown.pack(side="left", padx=5)
-
-        val_entry = ctk.CTkEntry(row_frame, width=150, placeholder_text="Value...")
-        val_entry.pack(side="left", padx=5)
-
-        btn_remove = ctk.CTkButton(
-            row_frame, 
-            text="❌", 
-            width=30, 
-            fg_color="transparent", 
-            hover_color="#331111",
-            command=lambda rf=row_frame: self._remove_filter_row(rf)
+        """Adds a filter rule row (FilterRow) inside the filters container."""
+        row = FilterRow(
+            master=self.filters_container,
+            get_live_values=self._get_live_field_values,
+            on_remove=self._handle_filter_row_removed,
         )
-        btn_remove.pack(side="right", padx=(5, 0))
+        row.pack(fill="x", pady=2)
+        self.filter_rows.append(row)
 
-        self.filter_rows.append({
-            "frame": row_frame,
-            "field": field_dropdown,
-            "operator": op_dropdown,
-            "value": val_entry
-        })
+    def _handle_filter_row_removed(self, row):
+        """FilterRow destroys its own widget on remove - just drop our reference."""
+        self.filter_rows = [r for r in self.filter_rows if r is not row]
 
-    def _remove_filter_row(self, row_frame):
-        """Removes a filter rule row from UI and tracking list."""
-        self.filter_rows = [r for r in self.filter_rows if r["frame"] != row_frame]
-        row_frame.destroy()
+    def _get_live_field_values(self, field_name):
+        """Returns the sorted, deduplicated, non-blank values currently
+        present in the roster for `field_name` - what a SET_VALUE_LIVE
+        filter field's multi-select options are built from."""
+        if self.student_data_provider is None:
+            return []
+        values = {
+            getattr(student, field_name, "").strip()
+            for student in self.student_data_provider.get_students()
+            if getattr(student, field_name, "").strip()
+        }
+        return sorted(values)
 
     def _toggle_email_section(self):
         """Packs email section BEFORE note_container to keep notes at the bottom."""

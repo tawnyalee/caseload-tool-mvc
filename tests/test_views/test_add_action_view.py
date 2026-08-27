@@ -6,6 +6,7 @@ from src.views.add_action_view import AddActionView
 from src.models.email_template import EmailTemplate
 from src.models.group import Group
 from src.services.template_repository import TemplateRepository
+from src.services.student_data_provider import FakeStudentDataProvider
 
 
 class MockController:
@@ -17,6 +18,13 @@ class MockControllerWithTemplates:
     """A mock controller carrying a real (tmp_path-backed) template repository."""
     def __init__(self, template_repo):
         self.template_repo = template_repo
+
+
+class MockControllerWithStudents:
+    """A mock controller carrying a real (tmp_path-backed) student provider,
+    for testing that live-dropdown filter fields pull from real data."""
+    def __init__(self, student_data_provider):
+        self.student_data_provider = student_data_provider
 
 
 @pytest.fixture(scope="session")
@@ -48,6 +56,74 @@ def test_add_action_view_selects_initial_group_on_add(ctk_root):
         initial_group_name="Group B"
     )
     assert view.group_dropdown.get() == "Group B"
+
+
+def test_new_action_starts_with_one_blank_filter_row(ctk_root):
+    view = AddActionView(master=ctk_root, controller=MockController())
+    assert len(view.filter_rows) == 1
+
+
+def test_get_action_data_omits_incomplete_filter_rows(ctk_root):
+    """A blank/never-touched default row shouldn't produce a filter condition."""
+    view = AddActionView(master=ctk_root, controller=MockController())
+    assert view.get_action_data()["filters"] == []
+
+
+def test_get_action_data_includes_a_completed_filter_row(ctk_root):
+    view = AddActionView(master=ctk_root, controller=MockController())
+    row = view.filter_rows[0]
+    row.field_dropdown.set("salesforce_id")
+    row._on_field_changed("salesforce_id")
+    row.operator_dropdown.set("Equals")
+    row._on_operator_changed("Equals")
+    row._value_widgets[0].insert(0, "000000001")
+
+    assert view.get_action_data()["filters"] == [
+        {"field": "salesforce_id", "operator": "Equals", "value": "000000001"}
+    ]
+
+
+def test_editing_an_action_repopulates_its_saved_filters(ctk_root):
+    """Regression test: editing an action used to silently drop its saved
+    filters (populate_fields never read them), which would now silently
+    widen an action back to the full roster on the next save."""
+    action_data = {
+        "group_name": "Group A",
+        "filters": [
+            {"field": "salesforce_id", "operator": "Equals", "value": "000000001"},
+            {"field": "momentum", "operator": "IsOneOf", "value": ["Low", "Med"]},
+        ],
+    }
+    view = AddActionView(
+        master=ctk_root, controller=MockController(), groups=["Group A"], action_data=action_data
+    )
+
+    assert len(view.filter_rows) == 2
+    assert view.get_action_data()["filters"] == action_data["filters"]
+
+
+def test_live_dropdown_filter_field_pulls_from_real_student_data(ctk_root, tmp_path):
+    fixture = tmp_path / "fake_students.json"
+    fixture.write_text(
+        '[{"salesforce_id": "SF1", "first_name": "Jane", "last_name": "Doe", '
+        '"email": "jane@example.test", "course_code": "D424"},'
+        '{"salesforce_id": "SF2", "first_name": "John", "last_name": "Roe", '
+        '"email": "john@example.test", "course_code": "D370"}]',
+        encoding="utf-8",
+    )
+    controller = MockControllerWithStudents(FakeStudentDataProvider(file_path=str(fixture)))
+    view = AddActionView(master=ctk_root, controller=controller)
+
+    assert view._get_live_field_values("course_code") == ["D370", "D424"]
+
+
+def test_editing_an_action_with_no_saved_filters_still_shows_one_blank_row(ctk_root):
+    action_data = {"group_name": "Group A"}
+    view = AddActionView(
+        master=ctk_root, controller=MockController(), groups=["Group A"], action_data=action_data
+    )
+    assert len(view.filter_rows) == 1
+    assert view.get_action_data()["filters"] == []
 
 
 def test_add_action_view_prioritizes_action_data_group_on_edit(ctk_root):
