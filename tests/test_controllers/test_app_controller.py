@@ -305,7 +305,12 @@ def test_handle_run_action_non_email_action_does_not_pass_content_overrides(mock
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")
-def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_showinfo):
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mock_showinfo):
+    """_handle_run_batch no longer runs immediately - it opens the
+    multi-item review dialog first (patched here for the same
+    module-identity reason as the other modal-opening tests in this file)
+    and only runs once its on_confirm callback fires."""
     controller = MagicMock()
     batch_summary = BatchRunSummary(items=[
         BatchItemResult(action_name="Action A", group_name="Group A", summary=ActionRunSummary()),
@@ -316,12 +321,19 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_showinfo)
     handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
     handle_run_batch([action], ["Group A"])
 
-    controller.action_runner.run_batch.assert_called_once_with([(action, "Group A")])
+    controller.action_runner.run_batch.assert_not_called()
+    _, kwargs = mock_modal.call_args
+    kwargs["on_confirm"]({"0": {"SF1"}})
+
+    controller.action_runner.run_batch.assert_called_once_with(
+        [(action, "Group A")], included_ids_by_index={0: {"SF1"}}
+    )
     mock_showinfo.assert_called_once()
 
 
 @patch("src.controllers.app_controller.messagebox.showwarning")
-def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_showwarning):
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_modal, mock_showwarning):
     controller = MagicMock()
     batch_summary = BatchRunSummary(items=[
         BatchItemResult(action_name="Broken", group_name="Group A", summary=ActionRunSummary(), error="boom"),
@@ -331,6 +343,9 @@ def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_showwarni
     handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
     handle_run_batch([MagicMock()], ["Group A"])
 
+    _, kwargs = mock_modal.call_args
+    kwargs["on_confirm"]({"0": {"SF1"}})
+
     mock_showwarning.assert_called_once()
     message = mock_showwarning.call_args[0][1]
     assert "Broken" in message
@@ -338,7 +353,8 @@ def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_showwarni
 
 
 @patch("src.controllers.app_controller.messagebox.showwarning")
-def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_showwarning):
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_modal, mock_showwarning):
     controller = MagicMock()
     failed_summary = ActionRunSummary(
         results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
@@ -351,7 +367,64 @@ def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_showwarning)
     handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
     handle_run_batch([MagicMock()], ["Group A"])
 
+    _, kwargs = mock_modal.call_args
+    kwargs["on_confirm"]({"0": {"SF1"}})
+
     mock_showwarning.assert_called_once()
+
+
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_handle_run_batch_builds_review_items_with_each_actions_matches(mock_modal):
+    controller = MagicMock()
+    action_a = MagicMock()
+    action_b = MagicMock()
+    action_a.name = "Welcome"
+    action_b.name = "Task 2"
+    controller.action_runner.get_matching_students.side_effect = [["s1", "s2"], ["s3"]]
+
+    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch([action_a, action_b], ["D424", "C769"])
+
+    _, kwargs = mock_modal.call_args
+    review_items = kwargs["items"]
+    assert [item.key for item in review_items] == ["0", "1"]
+    assert review_items[0].label == "D424 — Welcome"
+    assert review_items[0].students == ["s1", "s2"]
+    assert review_items[1].label == "C769 — Task 2"
+    assert review_items[1].students == ["s3"]
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_handle_send_welcome_emails_only_includes_groups_with_a_valid_welcome_action(mock_modal, mock_showinfo):
+    controller = MagicMock()
+    action = MagicMock()
+    action.name = "Welcome"
+    controller.action_repo.load_actions.return_value = [action]
+    action.id = "ACT-1"
+    controller.groups = [
+        Group(name="D424", group_id="G1", welcome_action_id="ACT-1"),
+        Group(name="No Welcome", group_id="G2", welcome_action_id=None),
+        Group(name="Dangling", group_id="G3", welcome_action_id="ACT-MISSING"),
+    ]
+    controller.action_runner.get_matching_students.return_value = ["s1"]
+    controller.action_runner.run_welcome_emails.return_value = ActionRunSummary()
+
+    handle_send_welcome_emails = AppController.handle_send_welcome_emails.__get__(controller, AppController)
+    handle_send_welcome_emails()
+
+    controller.action_runner.run_welcome_emails.assert_not_called()
+    _, kwargs = mock_modal.call_args
+    review_items = kwargs["items"]
+    assert [item.key for item in review_items] == ["G1"]
+    assert review_items[0].label == "D424 — Welcome"
+
+    kwargs["on_confirm"]({"G1": {"s1"}})
+
+    controller.action_runner.run_welcome_emails.assert_called_once_with(
+        controller.groups, {"ACT-1": action}, included_ids_by_group_id={"G1": {"s1"}}
+    )
+    mock_showinfo.assert_called_once()
 
 
 @patch.object(AppController, "_init_views")

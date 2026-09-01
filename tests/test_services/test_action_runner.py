@@ -517,10 +517,10 @@ def test_run_batch_continues_after_one_action_raises(tmp_path, monkeypatch):
 
     original_run = runner.run
 
-    def flaky_run(action, group_name):
+    def flaky_run(action, group_name, **kwargs):
         if action.name == "Broken Action":
             raise RuntimeError("boom")
-        return original_run(action, group_name)
+        return original_run(action, group_name, **kwargs)
 
     monkeypatch.setattr(runner, "run", flaky_run)
 
@@ -531,6 +531,60 @@ def test_run_batch_continues_after_one_action_raises(tmp_path, monkeypatch):
     assert batch_summary.items[0].summary.succeeded == 0
     assert batch_summary.items[1].error is None
     assert batch_summary.items[1].summary.succeeded == 3
+
+
+def test_run_welcome_emails_included_ids_by_group_id_restricts_each_group(tmp_path):
+    template_repo = TemplateRepository(file_path=str(tmp_path / "templates.json"))
+    template = EmailTemplate(name="Welcome", body="<b>Hi</b>")
+    template_repo.save(template)
+
+    action_a = _make_action(template.id, is_text=False, has_note=False)
+    action_a.id = "ACT-A"
+    action_b = _make_action(template.id, is_text=False, has_note=False)
+    action_b.id = "ACT-B"
+
+    groups = [
+        Group(name="Group A", group_id="G1", welcome_action_id="ACT-A"),
+        Group(name="Group B", group_id="G2", welcome_action_id="ACT-B"),
+    ]
+    actions_by_id = {"ACT-A": action_a, "ACT-B": action_b}
+
+    students = _make_students()  # SF1 Jane, SF2 John, SF3 Amy
+    email_sender = FakeEmailSender()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=email_sender,
+        text_sender=FakeTextSender(),
+        note_writer=FakeNoteWriter(),
+        template_repo=template_repo,
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+
+    runner.run_welcome_emails(
+        groups, actions_by_id,
+        included_ids_by_group_id={"G1": {"SF1"}, "G2": set()},
+    )
+
+    sent_addresses = {s["to"] for s in email_sender.sent}
+    assert sent_addresses == {"jane@example.test"}  # Group B (G2) fully deselected, John/Amy excluded
+
+
+def test_run_batch_included_ids_by_index_restricts_each_item(tmp_path):
+    students = _make_students()  # SF1 Jane, SF2 John, SF3 Amy
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+
+    action_one = _make_action(template.id, is_text=False, has_note=False)
+    action_one.name = "First"
+    action_two = _make_action(template.id, is_text=False, has_note=False)
+    action_two.name = "Second"
+
+    runner.run_batch(
+        [(action_one, "Group A"), (action_two, "Group B")],
+        included_ids_by_index={0: {"SF2"}, 1: {"SF1", "SF3"}},
+    )
+
+    sent_addresses = [s["to"] for s in email_sender.sent]
+    assert sent_addresses == ["john@example.test", "jane@example.test", "amy@example.test"]
 
 
 def test_run_batch_preserves_given_order(tmp_path):

@@ -19,6 +19,7 @@ from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
+from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -244,19 +245,38 @@ class AppController:
 
     def handle_send_welcome_emails(self) -> None:
         actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
-        summary = self.action_runner.run_welcome_emails(self.groups, actions_by_id)
+        eligible_groups = [g for g in self.groups if g.welcome_action_id and g.welcome_action_id in actions_by_id]
+        review_items = [
+            MultiReviewItem(
+                key=group.id, label=f"{group.name} — {actions_by_id[group.welcome_action_id].name}",
+                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id]),
+            )
+            for group in eligible_groups
+        ]
 
-        message = (
-            f"Welcome emails complete:\n\n"
-            f"✅ Succeeded: {summary.succeeded}\n"
-            f"❌ Failed: {summary.failed}\n"
-            f"⏭ Skipped: {summary.skipped}\n\n"
-            f"See the Live Application Log for full details."
+        def _on_confirm(selections):
+            summary = self.action_runner.run_welcome_emails(
+                self.groups, actions_by_id, included_ids_by_group_id=selections,
+            )
+
+            message = (
+                f"Welcome emails complete:\n\n"
+                f"✅ Succeeded: {summary.succeeded}\n"
+                f"❌ Failed: {summary.failed}\n"
+                f"⏭ Skipped: {summary.skipped}\n\n"
+                f"See the Live Application Log for full details."
+            )
+            if summary.failed or summary.skipped:
+                messagebox.showwarning("Welcome Emails — Review Needed", message)
+            else:
+                messagebox.showinfo("Welcome Emails Sent", message)
+
+        MultiReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title="Send Welcome Emails",
+            items=review_items,
+            on_confirm=_on_confirm,
         )
-        if summary.failed or summary.skipped:
-            messagebox.showwarning("Welcome Emails — Review Needed", message)
-        else:
-            messagebox.showinfo("Welcome Emails Sent", message)
 
     def handle_send_ad_hoc_email(
         self,
@@ -314,29 +334,46 @@ class AppController:
 
     def _handle_run_batch(self, actions, group_names) -> None:
         items = list(zip(actions, group_names))
-        batch_summary = self.action_runner.run_batch(items)
+        review_items = [
+            MultiReviewItem(
+                key=str(i), label=f"{group_name} — {action.name}",
+                students=self.action_runner.get_matching_students(action),
+            )
+            for i, (action, group_name) in enumerate(items)
+        ]
 
-        lines = []
-        for item in batch_summary.items:
-            if item.error:
-                lines.append(f"⚠ {item.action_name} ({item.group_name}): ERROR — {item.error}")
+        def _on_confirm(selections):
+            included_ids_by_index = {int(key): ids for key, ids in selections.items()}
+            batch_summary = self.action_runner.run_batch(items, included_ids_by_index=included_ids_by_index)
+
+            lines = []
+            for item in batch_summary.items:
+                if item.error:
+                    lines.append(f"⚠ {item.action_name} ({item.group_name}): ERROR — {item.error}")
+                else:
+                    lines.append(
+                        f"• {item.action_name} ({item.group_name}): "
+                        f"✅ {item.summary.succeeded}  ❌ {item.summary.failed}  ⏭ {item.summary.skipped}"
+                    )
+
+            message = (
+                f"Batch run complete — {len(batch_summary.items)} action(s):\n\n"
+                + "\n".join(lines)
+                + f"\n\nCombined: ✅ {batch_summary.succeeded}  ❌ {batch_summary.failed}  "
+                f"⏭ {batch_summary.skipped}\n\nSee the Live Application Log for full details."
+            )
+            has_issues = batch_summary.failed or any(item.error for item in batch_summary.items)
+            if has_issues:
+                messagebox.showwarning("Batch Run — Review Needed", message)
             else:
-                lines.append(
-                    f"• {item.action_name} ({item.group_name}): "
-                    f"✅ {item.summary.succeeded}  ❌ {item.summary.failed}  ⏭ {item.summary.skipped}"
-                )
+                messagebox.showinfo("Batch Run Complete", message)
 
-        message = (
-            f"Batch run complete — {len(batch_summary.items)} action(s):\n\n"
-            + "\n".join(lines)
-            + f"\n\nCombined: ✅ {batch_summary.succeeded}  ❌ {batch_summary.failed}  "
-            f"⏭ {batch_summary.skipped}\n\nSee the Live Application Log for full details."
+        MultiReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title="Run Batch",
+            items=review_items,
+            on_confirm=_on_confirm,
         )
-        has_issues = batch_summary.failed or any(item.error for item in batch_summary.items)
-        if has_issues:
-            messagebox.showwarning("Batch Run — Review Needed", message)
-        else:
-            messagebox.showinfo("Batch Run Complete", message)
 
     def handle_settings_requested(self) -> None:
         self.switch_workspace_view(

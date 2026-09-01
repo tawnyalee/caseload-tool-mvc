@@ -191,9 +191,17 @@ class ActionRunner:
         )
         return summary
 
-    def run_welcome_emails(self, groups: List[Group], actions_by_id: Dict[str, Action]) -> ActionRunSummary:
+    def run_welcome_emails(
+        self,
+        groups: List[Group],
+        actions_by_id: Dict[str, Action],
+        included_ids_by_group_id: Optional[Dict[str, Set[str]]] = None,
+    ) -> ActionRunSummary:
         """Runs every group's designated welcome action (Group.welcome_action_id)
-        and aggregates all of them into a single combined summary."""
+        and aggregates all of them into a single combined summary.
+        `included_ids_by_group_id`, when given, restricts each group's run to
+        just those student IDs - how the multi-item pre-send review dialog's
+        per-group deselection takes effect (see run())."""
         self.activity_logger.log("Starting welcome-email run across all groups")
         combined = ActionRunSummary()
 
@@ -208,7 +216,8 @@ class ActionRunner:
                 )
                 continue
 
-            group_summary = self.run(action, group_name=group.name)
+            included_ids = included_ids_by_group_id.get(group.id) if included_ids_by_group_id else None
+            group_summary = self.run(action, group_name=group.name, included_student_ids=included_ids)
             combined.results.extend(group_summary.results)
 
         self.activity_logger.log(
@@ -217,20 +226,28 @@ class ActionRunner:
         )
         return combined
 
-    def run_batch(self, items: List[Tuple[Action, str]]) -> BatchRunSummary:
+    def run_batch(
+        self,
+        items: List[Tuple[Action, str]],
+        included_ids_by_index: Optional[Dict[int, Set[str]]] = None,
+    ) -> BatchRunSummary:
         """Runs each (action, group_name) pair in `items`, in the order
         given, one action's failure isolated from the rest — same
         philosophy as run()'s per-student isolation, just one level up.
         Per-student failures within a single action are already caught
         inside run() and never raise; this additionally guards against an
         action's run() itself raising unexpectedly, so one broken action
-        can't stop the whole batch."""
+        can't stop the whole batch. `included_ids_by_index`, when given,
+        restricts item i's run to just those student IDs - keyed by
+        position rather than action.id since the same action could appear
+        more than once in a batch against different groups."""
         self.activity_logger.log(f"Starting batch run — {len(items)} action(s)")
         batch_summary = BatchRunSummary()
 
-        for action, group_name in items:
+        for i, (action, group_name) in enumerate(items):
+            included_ids = included_ids_by_index.get(i) if included_ids_by_index else None
             try:
-                summary = self.run(action, group_name=group_name)
+                summary = self.run(action, group_name=group_name, included_student_ids=included_ids)
                 batch_summary.items.append(
                     BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
                 )
