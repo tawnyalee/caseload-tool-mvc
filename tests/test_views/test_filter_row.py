@@ -1,11 +1,10 @@
-import tkinter as tk
-
 import customtkinter as ctk
 import pytest
 
 from src.services.filterable_fields import MOMENTUM_VALUES
 from src.views.date_picker import DatePickerEntry
 from src.views.filter_row import FilterRow
+from src.views.multi_select_entry import MultiSelectEntry
 
 
 @pytest.fixture(scope="session")
@@ -65,23 +64,22 @@ def test_is_empty_has_no_value_widget(ctk_root):
     assert row._value_widgets == []
 
 
-def test_fixed_set_value_field_gets_a_multiselect_listbox_with_fixed_options(ctk_root):
+def test_fixed_set_value_field_gets_a_multiselect_picker_with_fixed_options(ctk_root):
     row = FilterRow(master=ctk_root)
     _select_field(row, "momentum")
     _select_operator(row, "IsOneOf")
-    assert len(row._value_widgets) == 2
-    listbox = row._value_widgets[0]
-    assert isinstance(listbox, tk.Listbox)
-    assert str(listbox.cget("selectmode")) == "extended"
-    assert list(listbox.get(0, "end")) == MOMENTUM_VALUES
+    assert len(row._value_widgets) == 1
+    picker = row._value_widgets[0]
+    assert isinstance(picker, MultiSelectEntry)
+    assert picker._all_options == MOMENTUM_VALUES
 
 
-def test_live_set_value_field_populates_listbox_from_callback(ctk_root):
+def test_live_set_value_field_populates_picker_from_callback(ctk_root):
     row = FilterRow(master=ctk_root, get_live_values=lambda field_name: ["D424", "D370"])
     _select_field(row, "course_code")
     _select_operator(row, "IsOneOf")
-    listbox = row._value_widgets[0]
-    assert list(listbox.get(0, "end")) == ["D424", "D370"]
+    picker = row._value_widgets[0]
+    assert picker._all_options == ["D424", "D370"]
 
 
 def test_boolean_field_gets_a_true_false_dropdown(ctk_root):
@@ -107,13 +105,12 @@ def test_to_condition_no_value_operator(ctk_root):
     assert row.to_condition() == {"field": "term_end_date", "operator": "IsNotEmpty"}
 
 
-def test_to_condition_is_one_of_reads_listbox_selection(ctk_root):
+def test_to_condition_is_one_of_reads_picker_selection(ctk_root):
     row = FilterRow(master=ctk_root)
     _select_field(row, "momentum")
     _select_operator(row, "IsOneOf")
-    listbox = row._value_widgets[0]
-    listbox.selection_set(0)
-    listbox.selection_set(2)
+    picker = row._value_widgets[0]
+    picker.set_selected(["Low", "Med"])
     condition = row.to_condition()
     assert condition["field"] == "momentum"
     assert condition["operator"] == "IsOneOf"

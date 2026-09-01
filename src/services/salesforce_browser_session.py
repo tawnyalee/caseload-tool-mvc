@@ -31,16 +31,16 @@ def has_saved_session() -> bool:
     return STORAGE_STATE_PATH.exists()
 
 
-def save_session_interactively(playwright: Playwright, login_url: str, timeout_seconds: int = 300) -> None:
+def save_session_interactively(playwright: Playwright, login_url: str) -> None:
     """Opens a real, visible browser at `login_url`, waits for the
     developer to log in manually (including MFA), then saves the
     resulting session to STORAGE_STATE_PATH.
 
-    "Logged in" is detected as the URL leaving the login/MFA-challenge
-    page (no longer containing "login" or "mfa") - not bulletproof
-    against every possible post-login landing page shape, but good
-    enough for a script the developer is watching and can Ctrl+C out of
-    if it guesses wrong.
+    "Logged in" is confirmed by the developer themselves (pressing Enter
+    in the terminal) rather than guessed from the URL - the org's actual
+    SSO/MFA redirect chain isn't known in advance, and an intermediate
+    redirect hop briefly matching "looks logged in" caused the session to
+    be saved before login had actually happened.
     """
     browser = playwright.chromium.launch(headless=False)
     context = browser.new_context()
@@ -48,11 +48,7 @@ def save_session_interactively(playwright: Playwright, login_url: str, timeout_s
     page.goto(login_url)
 
     print("Log in (including MFA) in the browser window that just opened.")
-    print(f"Waiting up to {timeout_seconds}s for login to complete...")
-    page.wait_for_url(
-        lambda url: "login" not in url.lower() and "mfa" not in url.lower(),
-        timeout=timeout_seconds * 1000,
-    )
+    input("Once you're fully logged in and see your normal Salesforce/Learner360 view, press Enter here...")
 
     STORAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     context.storage_state(path=str(STORAGE_STATE_PATH))

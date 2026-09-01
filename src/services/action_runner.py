@@ -379,7 +379,8 @@ class ActionRunner:
         try:
             if note_subject or note_body:
                 self.note_writer.write_note(
-                    salesforce_id=student.salesforce_id, subject=note_subject, body=note_body
+                    salesforce_id=student.salesforce_id, subject=note_subject, body=note_body,
+                    course_code=record.course_code,
                 )
             if follow_up_note:
                 self.note_writer.update_follow_up_note(

@@ -407,11 +407,8 @@ class AddActionView(ctk.CTkFrame):
         if operator == Operator.IS_ONE_OF.value:
             if not row._value_widgets:
                 return
-            listbox = row._value_widgets[0]
             wanted = set(value) if isinstance(value, list) else {value}
-            for index, item in enumerate(listbox.get(0, "end")):
-                if item in wanted:
-                    listbox.selection_set(index)
+            row._value_widgets[0].set_selected(wanted)
             return
 
         if operator == Operator.BETWEEN.value and isinstance(value, list) and len(value) == 2:

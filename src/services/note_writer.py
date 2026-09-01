@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class NoteWriter(ABC):
     @abstractmethod
-    def write_note(self, salesforce_id: str, subject: str, body: str) -> None:
+    def write_note(self, salesforce_id: str, subject: str, body: str, course_code: str = "") -> None:
         """Writes a note against a student's record. Raises an exception if it fails."""
         raise NotImplementedError
 
@@ -37,10 +37,12 @@ class FakeNoteWriter(NoteWriter):
         self.written: List[dict] = []
         self.follow_up_notes: dict = {}  # salesforce_id -> latest text
 
-    def write_note(self, salesforce_id: str, subject: str, body: str) -> None:
+    def write_note(self, salesforce_id: str, subject: str, body: str, course_code: str = "") -> None:
         if salesforce_id in self.fail_for:
             raise RuntimeError(f"Simulated note-write failure for {salesforce_id}")
-        self.written.append({"salesforce_id": salesforce_id, "subject": subject, "body": body})
+        self.written.append({
+            "salesforce_id": salesforce_id, "subject": subject, "body": body, "course_code": course_code,
+        })
 
     def update_follow_up_note(self, salesforce_id: str, text: str) -> None:
         if salesforce_id in self.fail_for:
@@ -61,7 +63,7 @@ class PlaywrightNoteWriter(NoteWriter):
     separate edit step) depends entirely on the target org's real page
     layout, which isn't known yet. Rather than guess wrong selectors, the
     actual click/fill sequence is supplied as callbacks -
-    `write_note_fn(page, salesforce_id, subject, body)` and
+    `write_note_fn(page, salesforce_id, subject, body, course_code)` and
     `update_follow_up_fn(page, salesforce_id, text)` - so this class only
     owns what's reusable (opening the authenticated session, navigating
     to the record, cleaning up the browser) and the site-specific part
@@ -79,7 +81,7 @@ class PlaywrightNoteWriter(NoteWriter):
     def __init__(
         self,
         student_record_url_template: str,
-        write_note_fn: "Callable[[Page, str, str, str], None]",
+        write_note_fn: "Callable[[Page, str, str, str, str], None]",
         update_follow_up_fn: "Callable[[Page, str, str], None]",
         headless: bool = True,
     ):
@@ -88,8 +90,8 @@ class PlaywrightNoteWriter(NoteWriter):
         self.update_follow_up_fn = update_follow_up_fn
         self.headless = headless
 
-    def write_note(self, salesforce_id: str, subject: str, body: str) -> None:
-        self._run(salesforce_id, lambda page: self.write_note_fn(page, salesforce_id, subject, body))
+    def write_note(self, salesforce_id: str, subject: str, body: str, course_code: str = "") -> None:
+        self._run(salesforce_id, lambda page: self.write_note_fn(page, salesforce_id, subject, body, course_code))
 
     def update_follow_up_note(self, salesforce_id: str, text: str) -> None:
         self._run(salesforce_id, lambda page: self.update_follow_up_fn(page, salesforce_id, text))

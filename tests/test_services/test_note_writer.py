@@ -8,10 +8,12 @@ from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 
 def test_fake_note_writer_records_written_note():
     writer = FakeNoteWriter()
-    writer.write_note(salesforce_id="SF1", subject="Follow up", body="Called student")
+    writer.write_note(salesforce_id="SF1", subject="Follow up", body="Called student", course_code="D424")
 
     assert len(writer.written) == 1
-    assert writer.written[0] == {"salesforce_id": "SF1", "subject": "Follow up", "body": "Called student"}
+    assert writer.written[0] == {
+        "salesforce_id": "SF1", "subject": "Follow up", "body": "Called student", "course_code": "D424",
+    }
 
 
 def test_fake_note_writer_raises_for_configured_failure():
@@ -63,8 +65,8 @@ def record_page_url(tmp_path):
 def test_write_note_navigates_to_the_students_record_and_invokes_the_callback(saved_session, record_page_url):
     calls = []
 
-    def write_note_fn(page, salesforce_id, subject, body):
-        calls.append((salesforce_id, subject, body, page.url))
+    def write_note_fn(page, salesforce_id, subject, body, course_code):
+        calls.append((salesforce_id, subject, body, course_code, page.url))
 
     writer = PlaywrightNoteWriter(
         student_record_url_template=record_page_url,
@@ -72,11 +74,11 @@ def test_write_note_navigates_to_the_students_record_and_invokes_the_callback(sa
         update_follow_up_fn=lambda page, sid, text: None,
         headless=True,
     )
-    writer.write_note("SF1", "Follow up", "Called student")
+    writer.write_note("SF1", "Follow up", "Called student", course_code="D424")
 
     assert len(calls) == 1
-    salesforce_id, subject, body, url = calls[0]
-    assert (salesforce_id, subject, body) == ("SF1", "Follow up", "Called student")
+    salesforce_id, subject, body, course_code, url = calls[0]
+    assert (salesforce_id, subject, body, course_code) == ("SF1", "Follow up", "Called student", "D424")
     assert "id=SF1" in url
 
 
@@ -85,7 +87,7 @@ def test_update_follow_up_note_navigates_and_invokes_the_callback(saved_session,
 
     writer = PlaywrightNoteWriter(
         student_record_url_template=record_page_url,
-        write_note_fn=lambda page, sid, subject, body: None,
+        write_note_fn=lambda page, sid, subject, body, course_code: None,
         update_follow_up_fn=lambda page, sid, text: calls.append((sid, text)),
         headless=True,
     )
@@ -99,7 +101,7 @@ def test_playwright_note_writer_raises_a_clear_error_when_no_session_saved(tmp_p
 
     writer = PlaywrightNoteWriter(
         student_record_url_template="file:///does-not-matter.html?id={salesforce_id}",
-        write_note_fn=lambda page, sid, subject, body: None,
+        write_note_fn=lambda page, sid, subject, body, course_code: None,
         update_follow_up_fn=lambda page, sid, text: None,
     )
 

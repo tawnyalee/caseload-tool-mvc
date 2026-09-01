@@ -5,17 +5,17 @@ Reads FILTERABLE_FIELDS to drive which fields/operators are selectable at
 all - an invalid field+operator combination can never even be chosen -
 and swaps its value-input widget based on the selected field's kind and
 operator: a plain text entry, a DatePickerEntry (two, for Between), a
-multi-select Listbox for IsOneOf (shift/ctrl-click, same as VB.NET's
-SelectionMode.MultiExtended - see docs/filter_engine_requirements.md),
-or nothing at all for IsEmpty/IsNotEmpty.
+MultiSelectEntry popup checkbox picker for IsOneOf (see
+docs/filter_engine_requirements.md), or nothing at all for
+IsEmpty/IsNotEmpty.
 """
-import tkinter as tk
 from typing import Callable, Dict, List, Optional
 
 import customtkinter as ctk
 
 from src.services.filterable_fields import FILTERABLE_FIELDS, FieldKind, Operator
 from src.views.date_picker import DatePickerEntry
+from src.views.multi_select_entry import MultiSelectEntry
 
 _NO_VALUE_OPERATORS = {Operator.IS_EMPTY.value, Operator.IS_NOT_EMPTY.value}
 _MULTI_VALUE_OPERATORS = {Operator.IS_ONE_OF.value}
@@ -97,19 +97,9 @@ class FilterRow(ctk.CTkFrame):
 
         if operator in _MULTI_VALUE_OPERATORS:
             options = field_def.fixed_values or self._get_live_values(field_def.name)
-            listbox = tk.Listbox(
-                self.value_frame, selectmode=tk.EXTENDED,
-                height=min(6, max(3, len(options))), exportselection=False,
-            )
-            for option in options:
-                listbox.insert("end", option)
-            listbox.pack(side="left")
-            hint = ctk.CTkLabel(
-                self.value_frame, text="Hold Shift/Ctrl to select multiple",
-                font=ctk.CTkFont(size=10),
-            )
-            hint.pack(side="left", padx=(5, 0))
-            self._value_widgets = [listbox, hint]
+            picker = MultiSelectEntry(self.value_frame, options=options)
+            picker.pack(side="left")
+            self._value_widgets = [picker]
             return
 
         if operator in _TWO_VALUE_OPERATORS and field_def.kind == FieldKind.DATE:
@@ -157,8 +147,7 @@ class FilterRow(ctk.CTkFrame):
         if operator in _MULTI_VALUE_OPERATORS:
             if not self._value_widgets:
                 return None
-            listbox = self._value_widgets[0]
-            selected = [listbox.get(i) for i in listbox.curselection()]
+            selected = self._value_widgets[0].get_selected()
             if not selected:
                 return None
             condition["value"] = selected
