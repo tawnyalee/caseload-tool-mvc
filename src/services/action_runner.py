@@ -28,6 +28,7 @@ from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
 from src.services.email_sender import EmailSender
 from src.services.filter_engine import matches_student
+from src.services.note_records import NoteInsertRecord, resolve_course_code, validate_note_record
 from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
@@ -147,7 +148,8 @@ class ActionRunner:
                 if email_ok or text_ok:
                     summary.results.append(
                         self._attempt_note(
-                            student, action.note_subject, action.note_body, action.follow_up_note
+                            student, action.note_subject, action.note_body, action.follow_up_note,
+                            group_name=group_name,
                         )
                     )
                 else:
@@ -288,8 +290,26 @@ class ActionRunner:
             return StepResult(student=student, step_type="text", outcome="failed", detail=str(exc))
 
     def _attempt_note(
-        self, student: Student, note_subject: str, note_body: str, follow_up_note: str
+        self,
+        student: Student,
+        note_subject: str,
+        note_body: str,
+        follow_up_note: str,
+        group_name: str = "",
     ) -> StepResult:
+        record = NoteInsertRecord(
+            salesforce_id=student.salesforce_id,
+            course_code=resolve_course_code(student, group_name),
+            note_subject=note_subject,
+            note_body=note_body,
+            follow_up_note=follow_up_note,
+        )
+        problems = validate_note_record(record)
+        if problems:
+            self.activity_logger.log(f"[NOTE RECORD ISSUE] {student.full_name}: {'; '.join(problems)} — {record}")
+        else:
+            self.activity_logger.log(f"[NOTE RECORD] {student.full_name}: {record}")
+
         try:
             if note_subject or note_body:
                 self.note_writer.write_note(

@@ -182,6 +182,57 @@ def test_fake_senders_actually_receive_the_configured_content(tmp_path):
     assert note_writer.written[0]["salesforce_id"] == "SF1"
 
 
+def test_note_record_uses_group_name_as_course_code_for_a_real_course_group(tmp_path):
+    students = _make_students()
+    received = []
+    activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = activity_logger
+    action = _make_action(template.id)
+
+    runner.run(action, group_name="D424")
+
+    joined = "\n".join(received)
+    assert "[NOTE RECORD]" in joined
+    assert "course_code='D424'" in joined
+
+
+def test_note_record_falls_back_to_students_course_code_for_general(tmp_path):
+    students = [
+        Student(
+            salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test",
+            course_code="D370",
+        )
+    ]
+    received = []
+    activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = activity_logger
+    action = _make_action(template.id)
+
+    runner.run(action, group_name="General")
+
+    joined = "\n".join(received)
+    assert "course_code='D370'" in joined
+
+
+def test_note_record_issue_is_logged_for_a_student_with_no_salesforce_id(tmp_path):
+    students = [
+        Student(salesforce_id="", first_name="Jane", last_name="Doe", email="jane@example.test"),
+    ]
+    received = []
+    activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = activity_logger
+    action = _make_action(template.id)
+
+    runner.run(action, group_name="D424")
+
+    joined = "\n".join(received)
+    assert "[NOTE RECORD ISSUE]" in joined
+    assert "student ID" in joined
+
+
 def test_run_logs_start_template_and_summary(tmp_path):
     students = _make_students()
     received = []
