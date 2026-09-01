@@ -4,6 +4,7 @@ import customtkinter as ctk
 from src.views.template_editor_modal import TemplateEditorModal
 from src.views.filter_row import FilterRow
 from src.views.date_picker import DatePickerEntry
+from src.views.merge_field_picker import create_merge_field_menu
 from src.services.filterable_fields import FILTERABLE_FIELDS, Operator
 from src.services.outlook_signature_provider import get_signature_names_or_fallback
 import tkinter.messagebox as messagebox
@@ -624,8 +625,14 @@ class AddActionView(ctk.CTkFrame):
         lbl = ctk.CTkLabel(self.email_container, text="Subject Line:")
         lbl.pack(anchor="w", padx=10, pady=5)
 
-        self.email_subject = ctk.CTkEntry(self.email_container, placeholder_text="Email Subject", width=320)
-        self.email_subject.pack(anchor="w", padx=10, pady=2)
+        subject_row = ctk.CTkFrame(self.email_container, fg_color="transparent")
+        subject_row.pack(anchor="w", padx=10, pady=2)
+
+        self.email_subject = ctk.CTkEntry(subject_row, placeholder_text="Email Subject", width=320)
+        self.email_subject.pack(side="left")
+
+        self.subject_merge_field_menu = create_merge_field_menu(subject_row, self.email_subject)
+        self.subject_merge_field_menu.pack(side="left", padx=(5, 0))
 
         lbl = ctk.CTkLabel(self.email_container, text="Select or Create Template Below:")
         lbl.pack(anchor="w", padx=10, pady=5)

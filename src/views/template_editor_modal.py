@@ -3,6 +3,7 @@ import customtkinter as ctk
 import tkinter.messagebox as messagebox
 import win32clipboard
 from src.services import html_richtext as rt
+from src.views.merge_field_picker import create_merge_field_menu
 
 
 def _get_clipboard_html():
@@ -119,6 +120,11 @@ class TemplateEditorModal(ctk.CTkToplevel):
         self.body_text.bind("<<Paste>>", self._on_paste)
         self.body_text.bind("<Control-v>", self._on_paste)
         self.body_text.bind("<Control-V>", self._on_paste)
+
+        # Inserts a mail-merge token (e.g. {{student_name}}) at the cursor -
+        # placed in the toolbar so it's available wherever the body is edited.
+        self.merge_field_menu = create_merge_field_menu(toolbar, self.body_text)
+        self.merge_field_menu.pack(side="left", padx=(10, 2))
 
         # Save / Cancel
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")

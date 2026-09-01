@@ -3,6 +3,7 @@ import customtkinter as ctk
 import tkinter.messagebox as messagebox
 from src.services import html_richtext as rt
 from src.services.outlook_signature_provider import get_signature_names_or_fallback
+from src.views.merge_field_picker import create_merge_field_menu
 
 
 class DashboardView(ctk.CTkFrame):
@@ -83,8 +84,12 @@ class DashboardView(ctk.CTkFrame):
         c = self.scrollable_container
 
         ctk.CTkLabel(c, text="Subject", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=20, pady=(0, 2))
-        self.adhoc_subject = ctk.CTkEntry(c, placeholder_text="e.g., Class Canceled Today", width=400)
-        self.adhoc_subject.pack(anchor="w", padx=20, pady=(0, 10))
+        subject_row = ctk.CTkFrame(c, fg_color="transparent")
+        subject_row.pack(anchor="w", padx=20, pady=(0, 10))
+        self.adhoc_subject = ctk.CTkEntry(subject_row, placeholder_text="e.g., Class Canceled Today", width=400)
+        self.adhoc_subject.pack(side="left")
+        self.adhoc_subject_merge_field_menu = create_merge_field_menu(subject_row, self.adhoc_subject)
+        self.adhoc_subject_merge_field_menu.pack(side="left", padx=(5, 0))
 
         ctk.CTkLabel(c, text="Select Outlook Signature:", font=ctk.CTkFont(weight="bold")).pack(
             anchor="w", padx=20, pady=(0, 2)
@@ -120,6 +125,10 @@ class DashboardView(ctk.CTkFrame):
         self.adhoc_body_text = ctk.CTkTextbox(c, height=200, wrap="word")
         self.adhoc_body_text.pack(fill="x", padx=20, pady=(0, 10))
         rt.configure_base_tags(self.adhoc_body_text)
+
+        # Inserts a mail-merge token (e.g. {{student_name}}) at the cursor.
+        self.adhoc_body_merge_field_menu = create_merge_field_menu(toolbar, self.adhoc_body_text)
+        self.adhoc_body_merge_field_menu.pack(side="left", padx=(10, 2))
 
         # Note section - identical fields to a regular Action's note step
         # (AddActionView's note_subject/note_body/followup_note), so a

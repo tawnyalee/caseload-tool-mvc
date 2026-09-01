@@ -16,6 +16,7 @@ MAX_TASK_NUMBER = 15
 # that means failed-but-can-resubmit; the others are a pass or still-pending
 # states, not failures.
 TASK_STATUS_FAILED = "Revisions Needed"
+TASK_STATUS_PASSED = "Passed"
 
 
 def get_latest_task_number(student: Student) -> Optional[int]:
@@ -40,3 +41,9 @@ def is_latest_task_failed(student: Student) -> bool:
     revisions (this org's definition of "failed, but can resubmit"). False
     for a pass, a still-pending status, or no submission at all."""
     return student.latest_task_status.strip() == TASK_STATUS_FAILED
+
+
+def is_latest_task_passed(student: Student) -> bool:
+    """True if the student's most recent task submission passed. Mirrors
+    is_latest_task_failed - see its docstring for the same caveats."""
+    return student.latest_task_status.strip() == TASK_STATUS_PASSED

@@ -1,5 +1,5 @@
 from src.models.student import Student
-from src.services.task_utils import get_latest_task_number, is_latest_task_failed
+from src.services.task_utils import get_latest_task_number, is_latest_task_failed, is_latest_task_passed
 
 
 def _student(**kwargs) -> Student:
@@ -54,3 +54,24 @@ def test_pending_statuses_are_not_failures():
 def test_no_submission_at_all_is_not_a_failure():
     student = _student()
     assert is_latest_task_failed(student) is False
+
+
+def test_passed_is_a_pass():
+    student = _student(latest_task_status="Passed")
+    assert is_latest_task_passed(student) is True
+
+
+def test_revisions_needed_is_not_a_pass():
+    student = _student(latest_task_status="Revisions Needed")
+    assert is_latest_task_passed(student) is False
+
+
+def test_pending_statuses_are_not_passes():
+    for status in ("Task Submitted", "Evaluation Started"):
+        student = _student(latest_task_status=status)
+        assert is_latest_task_passed(student) is False
+
+
+def test_no_submission_at_all_is_not_a_pass():
+    student = _student()
+    assert is_latest_task_passed(student) is False

@@ -28,6 +28,7 @@ from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
 from src.services.email_sender import EmailSender
 from src.services.filter_engine import matches_student
+from src.services.merge_fields import render_merge_fields
 from src.services.note_records import NoteInsertRecord, resolve_course_code, validate_note_record
 from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
@@ -273,7 +274,11 @@ class ActionRunner:
 
     def _send_email(self, student: Student, subject: str, body: str, signature: str) -> StepResult:
         try:
-            self.email_sender.send(to_email=student.email, subject=subject, body=body, signature=signature)
+            rendered_subject = render_merge_fields(subject, student)
+            rendered_body = render_merge_fields(body, student)
+            self.email_sender.send(
+                to_email=student.email, subject=rendered_subject, body=rendered_body, signature=signature
+            )
             self.activity_logger.log(f"[EMAIL] Sent to {student.full_name} <{student.email}>")
             return StepResult(student=student, step_type="email", outcome="success")
         except Exception as exc:

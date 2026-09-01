@@ -79,6 +79,56 @@ def test_all_steps_succeed(tmp_path):
     assert summary.skipped == 0
 
 
+def test_email_subject_and_body_render_merge_fields_per_student(tmp_path):
+    students = [
+        Student(
+            salesforce_id="SF1", first_name="Jane", last_name="Doe",
+            email="jane@example.test", course_code="D424",
+        ),
+        Student(
+            salesforce_id="SF2", first_name="John", last_name="Roe",
+            email="john@example.test", course_code="D370",
+        ),
+    ]
+    template_repo = TemplateRepository(file_path=str(tmp_path / "templates.json"))
+    template = EmailTemplate(name="Welcome", body="Hi {{student_name}}, welcome to {{course_code}}!")
+    template_repo.save(template)
+    email_sender = FakeEmailSender()
+    runner = ActionRunner(
+        student_provider=_StaticStudentProvider(students),
+        email_sender=email_sender,
+        text_sender=FakeTextSender(),
+        note_writer=FakeNoteWriter(),
+        template_repo=template_repo,
+        activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+    )
+    action = Action(
+        name="Welcome Action", group_id="G1", is_email=True,
+        template_id=template.id, email_subject="Hi {{student_name}}!",
+    )
+
+    runner.run(action, group_name="Test Group")
+
+    sent_by_email = {s["to"]: s for s in email_sender.sent}
+    assert sent_by_email["jane@example.test"]["subject"] == "Hi Jane Doe!"
+    assert sent_by_email["jane@example.test"]["body"] == "Hi Jane Doe, welcome to D424!"
+    assert sent_by_email["john@example.test"]["subject"] == "Hi John Roe!"
+    assert sent_by_email["john@example.test"]["body"] == "Hi John Roe, welcome to D370!"
+
+
+def test_ad_hoc_email_also_renders_merge_fields_per_student(tmp_path):
+    students = [
+        Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test"),
+    ]
+    runner, *_ = _make_runner(tmp_path, students)
+    email_sender = runner.email_sender
+
+    runner.send_ad_hoc_email(subject="Hi {{student_name}}", body="Hello, {{student_name}}.")
+
+    assert email_sender.sent[0]["subject"] == "Hi Jane Doe"
+    assert email_sender.sent[0]["body"] == "Hello, Jane Doe."
+
+
 def test_run_only_processes_students_matching_the_actions_filters(tmp_path):
     students = _make_students()
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)
