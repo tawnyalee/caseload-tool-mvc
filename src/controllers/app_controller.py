@@ -18,6 +18,7 @@ from src.services.outlook_signature_provider import LocalOutlookSignatureProvide
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
 from src.views.batch_run_modal import BatchRunModal
+from src.views.review_send_modal import ReviewSendModal
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -267,23 +268,39 @@ class AppController:
         follow_up_note: str = "",
     ) -> None:
         """Called directly by DashboardView's inline compose section (no
-        modal - the email and note fields live on the dashboard itself)."""
-        summary = self.action_runner.send_ad_hoc_email(
-            subject, body, signature,
-            note_subject=note_subject, note_body=note_body, follow_up_note=follow_up_note,
-        )
+        modal - the email and note fields live on the dashboard itself).
+        Opens the pre-send review dialog first; the actual send only
+        happens if the professor confirms it there."""
+        students = self.action_runner.student_provider.get_students()
 
-        message = (
-            f"Ad-hoc email complete:\n\n"
-            f"✅ Succeeded: {summary.succeeded}\n"
-            f"❌ Failed: {summary.failed}\n"
-            f"⏭ Skipped: {summary.skipped}\n\n"
-            f"See the Live Application Log for full details."
+        def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
+            summary = self.action_runner.send_ad_hoc_email(
+                reviewed_subject, reviewed_body, signature,
+                note_subject=note_subject, note_body=note_body, follow_up_note=follow_up_note,
+                included_student_ids=selected_ids,
+            )
+
+            message = (
+                f"Ad-hoc email complete:\n\n"
+                f"✅ Succeeded: {summary.succeeded}\n"
+                f"❌ Failed: {summary.failed}\n"
+                f"⏭ Skipped: {summary.skipped}\n\n"
+                f"See the Live Application Log for full details."
+            )
+            if summary.failed or summary.skipped:
+                messagebox.showwarning("Send Complete — Review Needed", message)
+            else:
+                messagebox.showinfo("Send Complete", message)
+
+        ReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title="Send Email to All Students",
+            students=students,
+            is_email=True,
+            initial_subject=subject,
+            initial_body=body,
+            on_confirm=_on_confirm,
         )
-        if summary.failed or summary.skipped:
-            messagebox.showwarning("Send Complete — Review Needed", message)
-        else:
-            messagebox.showinfo("Send Complete", message)
 
     def handle_open_batch_runner(self) -> None:
         main_win = self.right_workspace.winfo_toplevel()
@@ -343,19 +360,40 @@ class AppController:
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
 
-        summary = self.action_runner.run(action, group_name=active_group)
+        matches = self.action_runner.get_matching_students(action)
+        template_body = ""
+        if action.is_email and action.template_id:
+            template = self.template_repo.get_by_id(action.template_id)
+            template_body = template.body if template else ""
 
-        message = (
-            f"Run complete for '{action_name}':\n\n"
-            f"✅ Succeeded: {summary.succeeded}\n"
-            f"❌ Failed: {summary.failed}\n"
-            f"⏭ Skipped: {summary.skipped}\n\n"
-            f"See the Live Application Log for full details."
+        def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
+            summary = self.action_runner.run(
+                action, group_name=active_group, included_student_ids=selected_ids,
+                email_subject_override=reviewed_subject if action.is_email else None,
+                email_body_override=reviewed_body if action.is_email else None,
+            )
+
+            message = (
+                f"Run complete for '{action_name}':\n\n"
+                f"✅ Succeeded: {summary.succeeded}\n"
+                f"❌ Failed: {summary.failed}\n"
+                f"⏭ Skipped: {summary.skipped}\n\n"
+                f"See the Live Application Log for full details."
+            )
+            if summary.failed or summary.skipped:
+                messagebox.showwarning("Run Complete — Review Needed", message)
+            else:
+                messagebox.showinfo("Run Complete", message)
+
+        ReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title=f"Run '{action_name}'",
+            students=matches,
+            is_email=action.is_email,
+            initial_subject=action.email_subject,
+            initial_body=template_body,
+            on_confirm=_on_confirm,
         )
-        if summary.failed or summary.skipped:
-            messagebox.showwarning("Run Complete — Review Needed", message)
-        else:
-            messagebox.showinfo("Run Complete", message)
 
     def handle_rename_action(self, old_name: str, new_name: str) -> None:
         """Handles the final save logic when an action is renamed inline."""

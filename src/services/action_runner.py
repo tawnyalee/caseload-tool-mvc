@@ -20,7 +20,7 @@ sends a one-off, non-template email to every student (e.g. a class
 cancellation notice).
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from src.models.action import Action
 from src.models.group import Group
@@ -114,7 +114,27 @@ class ActionRunner:
         self.template_repo = template_repo
         self.activity_logger = activity_logger
 
-    def run(self, action: Action, group_name: str) -> ActionRunSummary:
+    def get_matching_students(self, action: Action) -> List[Student]:
+        """Students matching action.filters, before running anything - used
+        by the pre-send review dialog to show who would be contacted."""
+        all_students = self.student_provider.get_students()
+        return [s for s in all_students if matches_student(s, action.filters)]
+
+    def run(
+        self,
+        action: Action,
+        group_name: str,
+        included_student_ids: Optional[Set[str]] = None,
+        email_subject_override: Optional[str] = None,
+        email_body_override: Optional[str] = None,
+    ) -> ActionRunSummary:
+        """`included_student_ids`, when given, further restricts the
+        filter-matched students to just those IDs - how the pre-send review
+        dialog's checkbox deselection actually takes effect. None (the
+        default) means every filter-matched student runs, same as before
+        that dialog existed. `email_subject_override`/`email_body_override`
+        are that same dialog's last-minute content edits - see
+        _attempt_email."""
         self.activity_logger.log(f"Starting run — Group: '{group_name}', Action: '{action.name}'")
 
         template = self.template_repo.get_by_id(action.template_id) if action.template_id else None
@@ -124,19 +144,25 @@ class ActionRunner:
 
         all_students = self.student_provider.get_students()
         students = [s for s in all_students if matches_student(s, action.filters)]
+        matched_count = len(students)
+        if included_student_ids is not None:
+            students = [s for s in students if s.salesforce_id in included_student_ids]
         if action.filters:
-            self.activity_logger.log(
-                f"Filters matched {len(students)} of {len(all_students)} students"
-            )
+            self.activity_logger.log(f"Filters matched {matched_count} of {len(all_students)} students")
+        self.activity_logger.log(f"'{action.name}' is currently running for {len(students)} students")
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         summary = ActionRunSummary()
 
         for student in students:
+            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
             email_ok = False
             text_ok = False
 
             if action.is_email:
-                result = self._attempt_email(student, action, template)
+                result = self._attempt_email(
+                    student, action, template,
+                    subject_override=email_subject_override, body_override=email_body_override,
+                )
                 summary.results.append(result)
                 email_ok = result.outcome == "success"
 
@@ -234,19 +260,25 @@ class ActionRunner:
         note_subject: str = "",
         note_body: str = "",
         follow_up_note: str = "",
+        included_student_ids: Optional[Set[str]] = None,
     ) -> ActionRunSummary:
         """Sends a one-off email (not tied to any saved Action or template) to
         every student from the provider — e.g. a class cancellation notice.
         Note handling is identical to a regular Action's note step: only
         attempted for a student the email succeeded for, skipped (not
         attempted) otherwise, and only if note_subject/note_body/
-        follow_up_note actually has content."""
+        follow_up_note actually has content. `included_student_ids`, when
+        given, restricts the send to just those IDs - see run()."""
         self.activity_logger.log(f"Starting ad-hoc email send — Subject: '{subject}'")
         students = self.student_provider.get_students()
+        if included_student_ids is not None:
+            students = [s for s in students if s.salesforce_id in included_student_ids]
+        self.activity_logger.log(f"Ad-hoc email is currently running for {len(students)} students")
         has_note_content = bool(note_subject or note_body or follow_up_note)
         summary = ActionRunSummary()
 
         for student in students:
+            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
             result = self._send_email(student, subject, body, signature)
             summary.results.append(result)
 
@@ -268,9 +300,21 @@ class ActionRunner:
         )
         return summary
 
-    def _attempt_email(self, student: Student, action: Action, template) -> StepResult:
-        body = template.body if template else ""
-        return self._send_email(student, action.email_subject, body, action.email_signature)
+    def _attempt_email(
+        self,
+        student: Student,
+        action: Action,
+        template,
+        subject_override: Optional[str] = None,
+        body_override: Optional[str] = None,
+    ) -> StepResult:
+        """`subject_override`/`body_override`, when given, replace
+        action.email_subject / the template's body for this call only - how
+        the pre-send review dialog's last-minute edits take effect, without
+        touching the saved Action or template."""
+        subject = subject_override if subject_override is not None else action.email_subject
+        body = body_override if body_override is not None else (template.body if template else "")
+        return self._send_email(student, subject, body, action.email_signature)
 
     def _send_email(self, student: Student, subject: str, body: str, signature: str) -> StepResult:
         try:

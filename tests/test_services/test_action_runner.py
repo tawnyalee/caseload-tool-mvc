@@ -154,6 +154,92 @@ def test_run_with_no_filters_processes_the_full_roster(tmp_path):
     assert summary.succeeded == 9  # unchanged - same as no filters at all
 
 
+def test_get_matching_students_returns_filtered_students_without_running_anything(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    action = _make_action(
+        template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}]
+    )
+
+    matches = runner.get_matching_students(action)
+
+    assert [s.salesforce_id for s in matches] == ["SF1"]
+    assert email_sender.sent == []
+
+
+def test_included_student_ids_further_restricts_a_run_to_the_selected_subset(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_text=False, has_note=False)
+
+    runner.run(action, group_name="Test Group", included_student_ids={"SF2"})
+
+    assert [s["to"] for s in email_sender.sent] == ["john@example.test"]
+
+
+def test_included_student_ids_none_means_everyone_filter_matched_still_runs(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_text=False, has_note=False)
+
+    runner.run(action, group_name="Test Group", included_student_ids=None)
+
+    assert len(email_sender.sent) == 3
+
+
+def test_run_logs_currently_running_count_and_per_student_processing_lines(tmp_path):
+    students = _make_students()
+    received = []
+    activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = activity_logger
+    action = _make_action(template.id, is_text=False, has_note=False)
+
+    runner.run(action, group_name="Test Group", included_student_ids={"SF1", "SF3"})
+
+    joined = "\n".join(received)
+    assert "'Welcome Action' is currently running for 2 students" in joined
+    assert "[PROCESSING] Jane Doe (ID: SF1)" in joined
+    assert "[PROCESSING] Amy Lee (ID: SF3)" in joined
+    assert "[PROCESSING] John Roe (ID: SF2)" not in joined
+
+
+def test_email_subject_and_body_overrides_replace_the_actions_own_content(tmp_path):
+    students = [Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test")]
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_text=False, has_note=False)  # action.email_subject == "Welcome"
+
+    runner.run(
+        action, group_name="Test Group",
+        email_subject_override="Overridden Subject {{student_name}}",
+        email_body_override="Overridden body.",
+    )
+
+    assert email_sender.sent[0]["subject"] == "Overridden Subject Jane Doe"
+    assert email_sender.sent[0]["body"] == "Overridden body."
+
+
+def test_no_override_falls_back_to_the_actions_own_subject_and_template_body(tmp_path):
+    students = [Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test")]
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)  # template.body == "<b>Hi</b>"
+    action = _make_action(template.id, is_text=False, has_note=False)  # action.email_subject == "Welcome"
+
+    runner.run(action, group_name="Test Group")
+
+    assert email_sender.sent[0]["subject"] == "Welcome"
+    assert email_sender.sent[0]["body"] == "<b>Hi</b>"
+
+
+def test_send_ad_hoc_email_included_student_ids_restricts_who_is_emailed(tmp_path):
+    students = _make_students()
+    runner, *_ = _make_runner(tmp_path, students)
+    email_sender = runner.email_sender
+
+    runner.send_ad_hoc_email(subject="Hi", body="Hello", included_student_ids={"SF3"})
+
+    assert [s["to"] for s in email_sender.sent] == ["amy@example.test"]
+
+
 def test_one_failed_communication_channel_still_leaves_a_note(tmp_path):
     students = _make_students()
     runner, template, *_ = _make_runner(tmp_path, students, text_fail_for={"555-0001"})
