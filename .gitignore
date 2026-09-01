@@ -9,3 +9,7 @@ logs/
 data/templates.json
 src/data/actions.json
 src/data/groups.json
+
+# Saved Salesforce browser session (Playwright storage_state) - as
+# sensitive as a password, holds live login cookies. Never commit.
+data/.salesforce_session.json

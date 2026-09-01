@@ -1,5 +1,14 @@
+import json
+
+import pytest
+
 from src.models.student import Student
-from src.services.student_data_provider import CsvStudentDataProvider, FakeStudentDataProvider
+from src.services import salesforce_browser_session as sbs
+from src.services.student_data_provider import (
+    CsvStudentDataProvider,
+    FakeStudentDataProvider,
+    PlaywrightStudentDataProvider,
+)
 
 
 def test_fake_provider_loads_fixture_students(tmp_path):
@@ -127,3 +136,56 @@ def test_csv_provider_computes_latest_task_number(tmp_path):
     students = provider.get_students()
 
     assert students[0].latest_task_number == 2
+
+
+_EXPORT_PAGE_HTML = """<!DOCTYPE html>
+<html><body>
+<button id="export-btn" onclick="downloadCsv()">Export</button>
+<script>
+function downloadCsv() {{
+  const csv = {csv_js_string};
+  const blob = new Blob([csv], {{type: 'text/csv'}});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'export.csv';
+  document.body.appendChild(a);
+  a.click();
+}}
+</script>
+</body></html>
+"""
+
+
+def test_playwright_provider_downloads_and_parses_the_exported_csv(tmp_path, monkeypatch):
+    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
+    sbs.STORAGE_STATE_PATH.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+
+    csv_content = "StudentID,StudentEmail,Name,CourseCode\nSF1,jane@example.test,Jane Doe,D424\n"
+    html_path = tmp_path / "report.html"
+    html_path.write_text(
+        _EXPORT_PAGE_HTML.format(csv_js_string=json.dumps(csv_content)), encoding="utf-8"
+    )
+
+    provider = PlaywrightStudentDataProvider(
+        report_url=f"file:///{html_path.as_posix()}",
+        export_button_selector="#export-btn",
+        headless=True,
+    )
+    students = provider.get_students()
+
+    assert len(students) == 1
+    assert students[0].salesforce_id == "SF1"
+    assert students[0].course_code == "D424"
+    assert students[0].full_name == "Jane Doe"
+
+
+def test_playwright_provider_raises_a_clear_error_when_no_session_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
+
+    provider = PlaywrightStudentDataProvider(
+        report_url="file:///does-not-matter.html", export_button_selector="#export-btn",
+    )
+
+    with pytest.raises(RuntimeError, match="salesforce_login.py"):
+        provider.get_students()

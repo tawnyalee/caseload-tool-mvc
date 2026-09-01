@@ -2,3 +2,5 @@ customtkinter
 pywebview
 pywin32
 pytest
+simple-salesforce
+playwright

@@ -1,10 +1,17 @@
 # src/services/note_writer.py
 """Abstract note-writing against a student's CRM record, plus a local fake
-that records what would have been written. The real adapter (Salesforce)
-implements this same interface later.
+that records what would have been written, and a Playwright-based real
+adapter for when API access isn't available (see
+src/services/salesforce_browser_session.py and src/CLAUDE.md's
+integration plan).
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional, Set
+from typing import TYPE_CHECKING, Callable, List, Optional, Set
+
+from src.services.salesforce_browser_session import open_authenticated_context
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 
 class NoteWriter(ABC):
@@ -39,3 +46,62 @@ class FakeNoteWriter(NoteWriter):
         if salesforce_id in self.fail_for:
             raise RuntimeError(f"Simulated follow-up-note update failure for {salesforce_id}")
         self.follow_up_notes[salesforce_id] = text
+
+
+class PlaywrightNoteWriter(NoteWriter):
+    """Writes notes and updates the follow-up-note field by driving a
+    real, already-authenticated browser (see salesforce_browser_session.py
+    - requires a session saved via scripts/salesforce_login.py first) to
+    a student's record page and simulating the same clicks/typing a
+    person would do - confirmed there's no faster path for this org
+    (see src/CLAUDE.md's integration plan).
+
+    The exact interaction (which button opens a note form, which field
+    is which, whether the follow-up field is inline-editable or needs a
+    separate edit step) depends entirely on the target org's real page
+    layout, which isn't known yet. Rather than guess wrong selectors, the
+    actual click/fill sequence is supplied as callbacks -
+    `write_note_fn(page, salesforce_id, subject, body)` and
+    `update_follow_up_fn(page, salesforce_id, text)` - so this class only
+    owns what's reusable (opening the authenticated session, navigating
+    to the record, cleaning up the browser) and the site-specific part
+    gets written once the real page is visible, e.g. via
+    `python -m playwright codegen <a real student record URL>`, recording
+    the note-entry flow, and turning that recording into a callback.
+
+    Same swap-later principle as PlaywrightStudentDataProvider: a
+    different target later (e.g. the in-house Learner360 caseload app at
+    learner360.wgu.edu, if that ends up being what's actually automated
+    against instead of raw Salesforce) is a different pair of callbacks
+    and a different student_record_url_template, not a rewrite of this
+    class or anything that calls NoteWriter."""
+
+    def __init__(
+        self,
+        student_record_url_template: str,
+        write_note_fn: "Callable[[Page, str, str, str], None]",
+        update_follow_up_fn: "Callable[[Page, str, str], None]",
+        headless: bool = True,
+    ):
+        self.student_record_url_template = student_record_url_template
+        self.write_note_fn = write_note_fn
+        self.update_follow_up_fn = update_follow_up_fn
+        self.headless = headless
+
+    def write_note(self, salesforce_id: str, subject: str, body: str) -> None:
+        self._run(salesforce_id, lambda page: self.write_note_fn(page, salesforce_id, subject, body))
+
+    def update_follow_up_note(self, salesforce_id: str, text: str) -> None:
+        self._run(salesforce_id, lambda page: self.update_follow_up_fn(page, salesforce_id, text))
+
+    def _run(self, salesforce_id: str, action: "Callable[[Page], None]") -> None:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            context = open_authenticated_context(playwright, headless=self.headless)
+            try:
+                page = context.new_page()
+                page.goto(self.student_record_url_template.format(salesforce_id=salesforce_id))
+                action(page)
+            finally:
+                context.browser.close()

@@ -11,15 +11,16 @@ yet-designed concern (field-type-aware operators, AND/OR grouping) that will
 layer on top once it's been worked out. get_students() just returns
 everything available from the source.
 """
-import csv
 import json
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import fields
 from pathlib import Path
 from typing import List
 
 from src.models.student import Student
-from src.services.csv_student_import import csv_row_to_student_fields
+from src.services.csv_student_import import parse_students_csv
+from src.services.salesforce_browser_session import open_authenticated_context
 from src.services.task_utils import get_latest_task_number
 
 _STUDENT_FIELD_NAMES = {f.name for f in fields(Student)}
@@ -85,21 +86,48 @@ class CsvStudentDataProvider(StudentDataProvider):
         self.csv_path = Path(csv_path)
 
     def get_students(self) -> List[Student]:
-        if not self.csv_path.exists():
-            return []
+        return parse_students_csv(self.csv_path)
 
-        with open(self.csv_path, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
 
-        students = []
-        for row in rows:
-            fields_dict = csv_row_to_student_fields(row)
-            fields_dict = {k: v for k, v in fields_dict.items() if k in _STUDENT_FIELD_NAMES}
+class PlaywrightStudentDataProvider(StudentDataProvider):
+    """Reads the roster by driving a real, already-authenticated browser
+    (see salesforce_browser_session.py - requires a session saved via
+    scripts/salesforce_login.py first) to a report/export page and
+    downloading its CSV, then parsing it exactly like
+    CsvStudentDataProvider does. The browser-automation step is the only
+    difference from the CSV hedge - it replaces a manual export with an
+    automated one, feeding the same parser either way.
+
+    `report_url` and `export_button_selector` are Salesforce-specific and
+    deliberately passed in rather than hardcoded, so switching to a
+    different target later (e.g. the in-house Learner360 caseload app at
+    learner360.wgu.edu, if that ends up being what's actually automated
+    against) is just different constructor arguments, not a rewrite -
+    same platform-independence principle as the StudentDataProvider
+    interface itself. Find the real selector for your org by running
+    `python -m playwright codegen <report_url>` and recording yourself
+    clicking Export - copy the resulting selector in here."""
+
+    def __init__(self, report_url: str, export_button_selector: str, headless: bool = True):
+        self.report_url = report_url
+        self.export_button_selector = export_button_selector
+        self.headless = headless
+
+    def get_students(self) -> List[Student]:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as playwright:
+            context = open_authenticated_context(playwright, headless=self.headless)
             try:
-                students.append(Student(**fields_dict))
-            except TypeError:
-                continue
+                page = context.new_page()
+                page.goto(self.report_url)
+                with page.expect_download() as download_info:
+                    page.click(self.export_button_selector)
+                download = download_info.value
 
-        for student in students:
-            student.latest_task_number = get_latest_task_number(student)
-        return students
+                csv_path = Path(tempfile.mkdtemp()) / download.suggested_filename
+                download.save_as(str(csv_path))
+            finally:
+                context.browser.close()
+
+        return parse_students_csv(csv_path)
