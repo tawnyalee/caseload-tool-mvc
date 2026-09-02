@@ -25,17 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.services.note_writer import PlaywrightNoteWriter
 from src.services.salesforce_callbacks import CASELOAD_APP_URL, update_follow_up_fn, write_note_fn
 
-TEST_STUDENT_ID = "011068562"
-
-
-def _update_follow_up_fn_then_pause(page, salesforce_id, text):
-    """Debug wrapper: runs the real callback, then freezes the browser
-    (via Playwright's own Inspector) instead of letting it close, so the
-    actual on-screen state right after the automated steps can be looked
-    at directly instead of guessed at from the outside."""
-    update_follow_up_fn(page, salesforce_id, text)
-    print("Pausing here - look at the browser window, then click Resume (or press F8) in the Inspector to let it close.")
-    page.pause()
+TEST_STUDENT_ID = "011730370"
 
 
 def main() -> None:
@@ -44,7 +34,7 @@ def main() -> None:
     writer = PlaywrightNoteWriter(
         student_record_url_template=CASELOAD_APP_URL,
         write_note_fn=write_note_fn,
-        update_follow_up_fn=_update_follow_up_fn_then_pause,
+        update_follow_up_fn=update_follow_up_fn,
         headless=False,
     )
 
@@ -54,7 +44,7 @@ def main() -> None:
             salesforce_id=TEST_STUDENT_ID,
             subject="Automated test note",
             body="Verifying PlaywrightNoteWriter.write_note()",
-            course_code="C769",
+            course_code="D413",
         )
         print("Done - check the student's record in Salesforce.")
 

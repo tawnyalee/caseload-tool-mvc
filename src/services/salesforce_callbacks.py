@@ -33,10 +33,45 @@ def _id_cell(page: Page, salesforce_id: str):
     return page.locator("td").filter(has_text=re.compile(rf"^{re.escape(salesforce_id)}$"))
 
 
-def _row_for_student(page: Page, salesforce_id: str):
+def _row_for_student(page: Page, salesforce_id: str, max_scroll_attempts: int = 60):
     """The <tr> containing that student's ID cell, for actions (like the
-    follow-up note button/textarea) scoped to the rest of their row."""
-    return page.locator("tr").filter(has=_id_cell(page, salesforce_id))
+    follow-up note button/textarea) scoped to the rest of their row.
+
+    The roster has ~242 students in a virtualized grid - a row that isn't
+    currently scrolled into view doesn't actually exist in the page yet,
+    and which student ends up where isn't predictable (the roster
+    reshuffles daily, and any given student could be anywhere in it). So
+    if the row isn't there on the first check, this scrolls down inside
+    the grid a bit at a time, re-checking after each step, until it
+    appears - or gives up after a generous number of attempts (this
+    student may no longer be on the roster at all, which has happened
+    before - a student who passed and moved on)."""
+    row = page.locator("tr").filter(has=_id_cell(page, salesforce_id))
+    if row.count() > 0:
+        return row
+
+    # The developer scrolls this roster by dragging its scrollbar
+    # directly, not a mouse wheel - mouse-wheel scrolling turned out not
+    # to move anything here (whether because it's not wired up on this
+    # custom grid, or the mouse just wasn't over the right element).
+    # Setting scrollTop directly on the real scrollable container fires
+    # the same native scroll event a scrollbar drag would, regardless of
+    # how a human would trigger it or where the mouse happens to be.
+    for _ in range(max_scroll_attempts):
+        page.locator("tr").first.evaluate(
+            """(el, dy) => {
+                let node = el;
+                while (node && node.scrollHeight <= node.clientHeight) {
+                    node = node.parentElement;
+                }
+                if (node) node.scrollTop += dy;
+            }""",
+            600,
+        )
+        page.wait_for_timeout(150)
+        if row.count() > 0:
+            return row
+    raise RuntimeError(f'Could not find a row for student "{salesforce_id}" after scrolling through the roster.')
 
 
 def write_note_fn(page: Page, salesforce_id: str, subject: str, body: str, course_code: str) -> None:
@@ -68,41 +103,28 @@ def write_note_fn(page: Page, salesforce_id: str, subject: str, body: str, cours
     page.get_by_role("tab", name="Caseload").click()
 
 
-def _followup_column_index(page: Page) -> int:
-    """The position of the "Followup Note" column among its header's
-    siblings - used to find the right <td> in a row structurally, since
-    the cell itself has no reliable button/title to search by (an
-    earlier attempt at that accidentally matched a *different* column,
-    "Course Contact", which happens to have similarly-worded text). The
-    header isn't a real <th>/columnheader-role element (neither found
-    anything), so this locates it by its own text instead and asks the
-    browser directly for its position among its parent's children -
-    works regardless of what markup this custom grid's header uses."""
-    header = page.get_by_text(re.compile(r"followup\s*note", re.IGNORECASE)).first
-    return header.evaluate("el => Array.from(el.parentElement.children).indexOf(el)")
-
-
 def update_follow_up_fn(page: Page, salesforce_id: str, text: str) -> None:
+    # The edit (pencil) icon's full title includes "...student and
+    # course" - exact=True avoids colliding with a different column's
+    # similarly-worded control ("Course Contact"). It also only seems to
+    # attach once the row's been hovered, same as a real person would
+    # before clicking.
     row = _row_for_student(page, salesforce_id)
-    # Some of this custom grid's row controls only activate once the row
-    # has actually been hovered (a real person naturally does this before
-    # clicking; a script doesn't unless told to) - hovering first may be
-    # why the "Add followup note" button hasn't been found reliably.
     row.hover()
-    row.get_by_title("Add followup note for this").click()
+    row.get_by_title("Add followup note for this student and course", exact=True).click()
     textarea = row.locator("textarea")
-    print(f"DEBUG: textarea value BEFORE editing = {textarea.input_value()!r}")
     textarea.click()
     textarea.press("ControlOrMeta+a")
-    textarea.fill(text)
-    print(f"DEBUG: textarea value immediately AFTER fill = {textarea.input_value()!r}")
-    # The field saves on losing focus (confirmed: moving to a different
-    # student's follow-up field saves the one just typed), not just on
-    # Enter - Tab reliably triggers that same blur/save without leaving a
-    # stray newline character in the saved text.
-    textarea.press("Tab")
-    # Whatever save this triggers is a network call to Salesforce, not
-    # instant - PlaywrightNoteWriter closes the whole browser right after
-    # this callback returns, which could cut that request off mid-flight.
-    # Give it a moment to actually complete first.
+    # .fill() sets the value in one shot with no real keystrokes - same
+    # issue the course code field had (see write_note_fn): the value
+    # visibly changes but Salesforce's own save logic never notices it.
+    textarea.press_sequentially(text)
+    # Saves on losing focus to something else on the page - the ID cell
+    # in this same row is a safe, always-present, inert thing to click
+    # (it has no click behavior of its own), so it can only trigger the
+    # blur/save here, nothing else.
+    _id_cell(page, salesforce_id).click()
+    # The save is a network call, not instant - PlaywrightNoteWriter
+    # closes the whole browser right after this callback returns, which
+    # could cut it off mid-flight otherwise.
     page.wait_for_timeout(1500)
