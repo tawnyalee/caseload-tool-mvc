@@ -263,3 +263,37 @@ def test_populate_fields_leaves_box_unchecked_when_action_is_not_the_welcome_act
 
     view = AddActionView(master=ctk_root, controller=MockController(), groups=[group], action_data=action_data)
     assert view.is_welcome_email_var.get() == "off"
+
+def test_note_fields_are_disabled_until_send_email_is_checked(ctk_root):
+    view = AddActionView(master=ctk_root, controller=MockController())
+    assert view.note_subject.cget("state") == "disabled"
+    assert view.followup_note.cget("state") == "disabled"
+
+    view.send_email_var.set("on")
+    view._toggle_email_section()
+
+    assert view.note_subject.cget("state") == "normal"
+    assert view.note_body.cget("state") == "normal"
+    assert view.followup_note.cget("state") == "normal"
+    assert view.interaction_menu.cget("state") == "normal"
+
+
+def test_editing_a_text_only_action_keeps_its_saved_note_content(ctk_root):
+    """Regression guard: a disabled entry silently ignores insert(), so the
+    note fields must be enabled while populating, or a text-only action's
+    saved note would be dropped and then wiped on the next save."""
+    action_data = {
+        "group_name": "Group A",
+        "is_text": True,
+        "text_body": "Hi there",
+        "note_subject": "Old subject",
+        "note_body": "Old body",
+        "follow_up_note": "Old follow-up",
+    }
+    view = AddActionView(master=ctk_root, controller=MockController(), groups=["Group A"], action_data=action_data)
+
+    assert view.note_subject.cget("state") == "disabled"
+    data = view.get_action_data()
+    assert data["note_subject"] == "Old subject"
+    assert data["note_body"] == "Old body"
+    assert data["follow_up_note"] == "Old follow-up"

@@ -196,8 +196,19 @@ class AddActionView(ctk.CTkFrame):
         )
         self.note_container.pack(fill="x", padx=5, pady=(5, 15))
 
-        lbl = ctk.CTkLabel(self.note_container, text="📝 Note Details:", font=ctk.CTkFont(weight="bold"))
-        lbl.pack(anchor="w", padx=10, pady=5)
+        note_header = ctk.CTkLabel(self.note_container, text="📝 Note Details:", font=ctk.CTkFont(weight="bold"))
+        note_header.pack(anchor="w", padx=10, pady=5)
+
+        # Shown (packed) only while the note fields are disabled - see
+        # _update_note_section_state.
+        self.note_disabled_hint = ctk.CTkLabel(
+            self.note_container,
+            text="Notes are only written after a successful email. Texts are noted automatically by Mongoose.",
+            text_color=("gray40", "gray60"),
+            wraplength=420,
+            justify="left",
+        )
+        self._note_header = note_header
 
         self.interaction_type_var = ctk.StringVar(value="Email")
         interaction_lbl = ctk.CTkLabel(self.note_container, text="Interaction Type:")
@@ -228,6 +239,8 @@ class AddActionView(ctk.CTkFrame):
 
         self.followup_note = ctk.CTkEntry(self.note_container, placeholder_text="Follow-up Note", width=320)
         self.followup_note.pack(anchor="w", padx=10, pady=(2, 10))
+
+        self._update_note_section_state()
 
         # --- Bottom Controls Frame ---
         self.controls_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -349,6 +362,10 @@ class AddActionView(ctk.CTkFrame):
             "followup_note": data.get("follow_up_note", "")
         }
         
+        # A disabled tkinter entry silently ignores insert(), so a text-only
+        # action's saved note content would be dropped here (and then wiped
+        # on the next save). Enable first, re-apply the real state after.
+        self._set_note_fields_enabled(True)
         if note_config or data.get("create_note"):
             if "subject" in note_config and note_config["subject"]:
                 self.note_subject.delete(0, "end")
@@ -371,6 +388,7 @@ class AddActionView(ctk.CTkFrame):
             if "followup_note" in note_config and note_config["followup_note"]:
                 self.followup_note.delete(0, "end")
                 self.followup_note.insert(0, note_config["followup_note"])
+        self._update_note_section_state()
 
         # 8. Filters — replace the default blank row with one row per saved
         # condition, so editing an action doesn't silently drop its filters.
@@ -515,6 +533,24 @@ class AddActionView(ctk.CTkFrame):
             self.email_container.pack(fill="x", padx=15, pady=5, before=self.note_container)
         else:
             self.email_container.pack_forget()
+        self._update_note_section_state()
+
+    def _update_note_section_state(self):
+        """Greys out the note fields unless Send Email is checked - ActionRunner
+        only writes a note after a successful email (Mongoose notes texts
+        itself). Typed content is kept, not cleared, so unchecking and
+        re-checking Send Email doesn't lose anything."""
+        email_on = self.send_email_var.get() == "on"
+        self._set_note_fields_enabled(email_on)
+        if email_on:
+            self.note_disabled_hint.pack_forget()
+        else:
+            self.note_disabled_hint.pack(anchor="w", padx=10, pady=(0, 5), after=self._note_header)
+
+    def _set_note_fields_enabled(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        for widget in (self.interaction_menu, self.note_subject, self.note_body, self.followup_note):
+            widget.configure(state=state)
 
     def _toggle_text_section(self):
         """Packs text section BEFORE note_container to keep notes at the bottom."""
