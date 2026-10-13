@@ -26,6 +26,20 @@ from src.views.dashboard_view import DashboardView
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
 from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
+from src.views.run_summary_modal import RunSummaryModal
+from src.services.run_report import batch_issue_lines, issue_lines
+
+
+def _show_run_results(master, clean_title: str, issues_title: str, message: str, lines: List[str]) -> None:
+    """End-of-run results: a plain info popup for a clean run, otherwise
+    the scrollable RunSummaryModal listing every failed/skipped step by
+    student. A module-level function, not a method, so tests that run real
+    handler methods against a MagicMock controller still reach it."""
+    if lines:
+        RunSummaryModal(master, title=issues_title, message=message, issue_lines=lines)
+    else:
+        messagebox.showinfo(clean_title, message)
+
 
 class PlaceholderView(ctk.CTkFrame):
     """A generic, reusable view for features still in development."""
@@ -316,12 +330,12 @@ class AppController:
                 f"✅ Succeeded: {summary.succeeded}\n"
                 f"❌ Failed: {summary.failed}\n"
                 f"⏭ Skipped: {summary.skipped}\n\n"
-                f"See the Live Application Log for full details."
+                f"Full details are in the Live Application Log."
             )
-            if summary.failed or summary.skipped:
-                messagebox.showwarning("Welcome Emails — Review Needed", message)
-            else:
-                messagebox.showinfo("Welcome Emails Sent", message)
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "Welcome Emails Sent",
+                "Welcome Emails — Review Needed", message, issue_lines(summary),
+            )
 
         MultiReviewSendModal(
             master=self.right_workspace.winfo_toplevel(),
@@ -357,12 +371,12 @@ class AppController:
                 f"✅ Succeeded: {summary.succeeded}\n"
                 f"❌ Failed: {summary.failed}\n"
                 f"⏭ Skipped: {summary.skipped}\n\n"
-                f"See the Live Application Log for full details."
+                f"Full details are in the Live Application Log."
             )
-            if summary.failed or summary.skipped:
-                messagebox.showwarning("Send Complete — Review Needed", message)
-            else:
-                messagebox.showinfo("Send Complete", message)
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "Send Complete",
+                "Send Complete — Review Needed", message, issue_lines(summary),
+            )
 
         ReviewSendModal(
             master=self.right_workspace.winfo_toplevel(),
@@ -421,13 +435,12 @@ class AppController:
                 f"Batch run complete — {len(batch_summary.items)} action(s):\n\n"
                 + "\n".join(lines)
                 + f"\n\nCombined: ✅ {batch_summary.succeeded}  ❌ {batch_summary.failed}  "
-                f"⏭ {batch_summary.skipped}\n\nSee the Live Application Log for full details."
+                f"⏭ {batch_summary.skipped}\n\nFull details are in the Live Application Log."
             )
-            has_issues = batch_summary.failed or any(item.error for item in batch_summary.items)
-            if has_issues:
-                messagebox.showwarning("Batch Run — Review Needed", message)
-            else:
-                messagebox.showinfo("Batch Run Complete", message)
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "Batch Run Complete",
+                "Batch Run — Review Needed", message, batch_issue_lines(batch_summary),
+            )
 
         MultiReviewSendModal(
             master=self.right_workspace.winfo_toplevel(),
@@ -476,12 +489,12 @@ class AppController:
                 f"✅ Succeeded: {summary.succeeded}\n"
                 f"❌ Failed: {summary.failed}\n"
                 f"⏭ Skipped: {summary.skipped}\n\n"
-                f"See the Live Application Log for full details."
+                f"Full details are in the Live Application Log."
             )
-            if summary.failed or summary.skipped:
-                messagebox.showwarning("Run Complete — Review Needed", message)
-            else:
-                messagebox.showinfo("Run Complete", message)
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "Run Complete",
+                "Run Complete — Review Needed", message, issue_lines(summary),
+            )
 
         ReviewSendModal(
             master=self.right_workspace.winfo_toplevel(),

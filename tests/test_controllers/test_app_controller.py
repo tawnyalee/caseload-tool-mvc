@@ -266,9 +266,9 @@ def test_handle_send_ad_hoc_email_opens_review_dialog_then_sends_on_confirm(mock
     mock_showinfo.assert_called_once()
 
 
-@patch("src.controllers.app_controller.messagebox.showwarning")
+@patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.ReviewSendModal")
-def test_handle_send_ad_hoc_email_shows_showwarning_on_failures(mock_modal, mock_showwarning):
+def test_handle_send_ad_hoc_email_shows_results_window_on_failures(mock_modal, mock_results):
     controller = MagicMock()
     failed_summary = ActionRunSummary(
         results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
@@ -282,7 +282,8 @@ def test_handle_send_ad_hoc_email_shows_showwarning_on_failures(mock_modal, mock
     _, kwargs = mock_modal.call_args
     kwargs["on_confirm"]({"SF1"}, "Class Canceled", "<p>No class today.</p>")
 
-    mock_showwarning.assert_called_once()
+    mock_results.assert_called_once()
+    assert len(mock_results.call_args.kwargs["issue_lines"]) == 1
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")
@@ -366,9 +367,9 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mo
     mock_showinfo.assert_called_once()
 
 
-@patch("src.controllers.app_controller.messagebox.showwarning")
+@patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.MultiReviewSendModal")
-def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_modal, mock_showwarning):
+def test_handle_run_batch_shows_results_window_when_an_action_errors(mock_modal, mock_results):
     controller = MagicMock()
     batch_summary = BatchRunSummary(items=[
         BatchItemResult(action_name="Broken", group_name="Group A", summary=ActionRunSummary(), error="boom"),
@@ -381,15 +382,14 @@ def test_handle_run_batch_shows_showwarning_when_an_action_errors(mock_modal, mo
     _, kwargs = mock_modal.call_args
     kwargs["on_confirm"]({"0": {"SF1"}})
 
-    mock_showwarning.assert_called_once()
-    message = mock_showwarning.call_args[0][1]
-    assert "Broken" in message
-    assert "boom" in message
+    mock_results.assert_called_once()
+    assert "Broken" in mock_results.call_args.kwargs["message"]
+    assert any("boom" in line for line in mock_results.call_args.kwargs["issue_lines"])
 
 
-@patch("src.controllers.app_controller.messagebox.showwarning")
+@patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.MultiReviewSendModal")
-def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_modal, mock_showwarning):
+def test_handle_run_batch_shows_results_window_when_a_step_failed(mock_modal, mock_results):
     controller = MagicMock()
     failed_summary = ActionRunSummary(
         results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
@@ -405,7 +405,7 @@ def test_handle_run_batch_shows_showwarning_when_a_step_failed(mock_modal, mock_
     _, kwargs = mock_modal.call_args
     kwargs["on_confirm"]({"0": {"SF1"}})
 
-    mock_showwarning.assert_called_once()
+    mock_results.assert_called_once()
 
 
 @patch("controllers.app_controller.MultiReviewSendModal")
