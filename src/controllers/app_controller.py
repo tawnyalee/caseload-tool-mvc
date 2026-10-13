@@ -10,7 +10,7 @@ from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
 from src.services.saved_batch_repository import SavedBatchRepository
 from src.models.email_template import EmailTemplate
-from src.services.activity_logger import ActivityLogger
+from src.services.activity_logger import ActivityLogger, purge_old_logs
 from src.services.student_data_provider import (
     CachingStudentDataProvider,
     FakeStudentDataProvider,
@@ -19,7 +19,9 @@ from src.services.student_data_provider import (
 from src.services.email_sender import FakeEmailSender
 from src.services.text_sender import FakeTextSender
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
-from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn
+from src.services.salesforce_callbacks import (
+    CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, SCREENSHOTS_DIR, update_follow_up_fn, write_note_fn,
+)
 from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
@@ -56,6 +58,11 @@ class PlaceholderView(ctk.CTkFrame):
 
 
 class AppController:
+    # The repo's logs/ folder (screenshots live in logs/screenshots/), anchored
+    # to this file rather than the current working directory, so startup
+    # cleanup always targets the same folder the logger writes to.
+    LOG_DIR = SCREENSHOTS_DIR.parent
+
     # region Initialization
     def __init__(self) -> None:
         self.root: ctk.CTk = ctk.CTk()
@@ -68,8 +75,13 @@ class AppController:
         self.action_repo = ActionRepository()
         self.template_repo = TemplateRepository()
         self.saved_batch_repo = SavedBatchRepository()
+        # Before the logger opens today's file. Logs/screenshots can hold
+        # student names, so nothing older than today is kept (see purge_old_logs).
+        removed_count = purge_old_logs(self.LOG_DIR, SCREENSHOTS_DIR)
         # ui_callback is wired up in _init_views() once nav_panel exists
-        self.activity_logger = ActivityLogger()
+        self.activity_logger = ActivityLogger(log_dir=str(self.LOG_DIR))
+        if removed_count:
+            self.activity_logger.log(f"Cleared {removed_count} log file(s)/screenshot(s) from previous days")
 
         # Fake/local implementations for now — real Salesforce/Cadence/Outlook
         # adapters will implement these same interfaces later without any
