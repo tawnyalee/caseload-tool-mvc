@@ -8,12 +8,18 @@ from src.services.group_repository import GroupRepository
 from src.services.action_repository import ActionRepository
 from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
+from src.services.saved_batch_repository import SavedBatchRepository
 from src.models.email_template import EmailTemplate
 from src.services.activity_logger import ActivityLogger
-from src.services.student_data_provider import FakeStudentDataProvider
+from src.services.student_data_provider import (
+    CachingStudentDataProvider,
+    FakeStudentDataProvider,
+    PlaywrightStudentDataProvider,
+)
 from src.services.email_sender import FakeEmailSender
 from src.services.text_sender import FakeTextSender
-from src.services.note_writer import FakeNoteWriter
+from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
+from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn
 from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
 from src.services.action_runner import ActionRunner
 from src.views.dashboard_view import DashboardView
@@ -47,16 +53,42 @@ class AppController:
         self.group_repo = GroupRepository()
         self.action_repo = ActionRepository()
         self.template_repo = TemplateRepository()
+        self.saved_batch_repo = SavedBatchRepository()
         # ui_callback is wired up in _init_views() once nav_panel exists
         self.activity_logger = ActivityLogger()
 
         # Fake/local implementations for now — real Salesforce/Cadence/Outlook
         # adapters will implement these same interfaces later without any
         # other code here needing to change.
-        self.student_data_provider = FakeStudentDataProvider()
+        # Wrapped in CachingStudentDataProvider so the many call sites that
+        # each independently call get_students() (a review dialog, EVERY
+        # item in a batch review, running an action) share one fetch per
+        # session instead of each triggering their own ~20s+ live browser
+        # round trip - confirmed painfully slow without this. "Refresh
+        # Caseload" (handle_refresh_requested) forces a new fetch; the
+        # roster is also fetched once eagerly at startup, below.
+        self.student_data_provider = CachingStudentDataProvider(
+            PlaywrightStudentDataProvider(
+                report_url=CASELOAD_APP_URL,
+                export_button_selector=EXPORT_BUTTON_SELECTOR,
+            )
+        )
         self.email_sender = FakeEmailSender()
         self.text_sender = FakeTextSender()
-        self.note_writer = FakeNoteWriter()
+
+        # The one real (non-fake) adapter so far - confirmed working
+        # end-to-end against production Salesforce (see src/CLAUDE.md's
+        # Salesforce integration plan). Construction itself never fails even
+        # without a saved session; write_note()/update_follow_up_note() raise
+        # a clear "run scripts/salesforce_login.py first" RuntimeError at call
+        # time instead, which ActionRunner already catches and logs per
+        # student like any other failure - so this is safe to wire in
+        # unconditionally, logged-in or not.
+        self.note_writer = PlaywrightNoteWriter(
+            student_record_url_template=CASELOAD_APP_URL,
+            write_note_fn=write_note_fn,
+            update_follow_up_fn=update_follow_up_fn,
+        )
 
         # Real, not fake — this just lists files under the local Outlook
         # signatures folder, so it works today without a full Outlook adapter.
@@ -111,7 +143,27 @@ class AppController:
 
         # Use helper to populate self.scenarios_raw as a Dictionary
         self._reload_scenarios_dict()
+        self._refresh_caseload_at_startup()
     # endregion
+
+    def _refresh_caseload_at_startup(self) -> None:
+        """Eager fetch on every launch (the developer's explicit choice over
+        a lazy first-use fetch) - the roster changes throughout the day at
+        the source, so a stale cache surviving between sessions isn't
+        acceptable. This blocks startup for the live Salesforce round trip
+        (~20s+); a failure here (e.g. an expired session on first launch of
+        the day) is logged rather than crashing startup - the cache just
+        stays empty until a working "Refresh Caseload" click.
+
+        A separate method (not inlined in _load_data) specifically so tests
+        that construct a real AppController can patch this out the same way
+        they already patch _init_views, instead of every such test
+        triggering a real, slow, session-dependent Salesforce round trip."""
+        try:
+            students = self.student_data_provider.refresh()
+            self.activity_logger.log(f"Caseload loaded at startup: {len(students)} students")
+        except Exception as exc:
+            self.activity_logger.log(f"[CASELOAD FETCH FAILED AT STARTUP] {exc}")
 
     # region View Management
     def _init_views(self) -> None:
@@ -330,7 +382,16 @@ class AppController:
             actions=actions,
             groups=self.groups,
             on_run=self._handle_run_batch,
+            saved_batches=self.saved_batch_repo.load_batches(),
+            on_save_batch=self._handle_save_batch,
+            on_delete_batch=self._handle_delete_batch,
         )
+
+    def _handle_save_batch(self, name: str, action_ids: List[str]):
+        return self.saved_batch_repo.save_batch(name, action_ids)
+
+    def _handle_delete_batch(self, batch_id: str) -> None:
+        self.saved_batch_repo.delete_batch(batch_id)
 
     def _handle_run_batch(self, actions, group_names) -> None:
         items = list(zip(actions, group_names))
@@ -916,10 +977,16 @@ class AppController:
 
     def handle_refresh_requested(self) -> None:
         self.activity_logger.log("Refresh Caseload clicked")
-        messagebox.showinfo(
-            "Refresh Caseload",
-            "↻ Refreshing Caseload...\n\nFetching the latest caseload rosters and syncing data views."
-        )
+        try:
+            students = self.student_data_provider.refresh()
+            self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
+            messagebox.showinfo(
+                "Refresh Caseload",
+                f"↻ Caseload refreshed — {len(students)} students loaded."
+            )
+        except Exception as exc:
+            self.activity_logger.log(f"[REFRESH FAILED] {exc}")
+            messagebox.showerror("Refresh Failed", f"Couldn't refresh the caseload:\n\n{exc}")
 
     def handle_sync_ids_requested(self) -> None:
         self.activity_logger.log("Sync Texting IDs clicked")

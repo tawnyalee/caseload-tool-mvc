@@ -12,7 +12,21 @@ from models.group import Group
 from models.action import Action
 from services.group_repository import GroupRepository
 from services.action_repository import ActionRepository
+from services.saved_batch_repository import SavedBatchRepository
 from services.action_runner import ActionRunSummary, BatchRunSummary, BatchItemResult, StepResult
+from models.student import Student
+
+# AppController itself (imported above via 'controllers.app_controller', no
+# src. prefix - see sys.path.insert above) internally imports these two
+# classes via 'src.services.student_data_provider' - importing them the same
+# way here (not 'services.student_data_provider') is required for
+# isinstance()/@patch.object to target the SAME class object AppController
+# actually uses, not a second, separately-loaded one - same module-identity
+# footgun documented on test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wired's
+# BatchRunModal patch, below. Getting this wrong doesn't error - it silently
+# no-ops the patch and lets the real (live, network-calling) code run instead.
+from src.services.student_data_provider import CachingStudentDataProvider, PlaywrightStudentDataProvider
+from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR
 
 
 def test_handle_add_action_clicked_reads_nav_panel_group():
@@ -36,9 +50,11 @@ def test_handle_add_action_clicked_reads_nav_panel_group():
     assert kwargs["initial_group_name"] == "Selected Group Name"
 
 
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
-def test_save_action_sets_welcome_action_id(mock_ctk, mock_init_views, tmp_path):
+def test_save_action_sets_welcome_action_id(mock_ctk, mock_init_views, mock_refresh_caseload, mock_showinfo, tmp_path):
     """Verify that saving an action with is_welcome_email=True sets group.welcome_action_id.
 
     save_action() persists via self.group_repo.save_groups(self.groups) and
@@ -67,9 +83,13 @@ def test_save_action_sets_welcome_action_id(mock_ctk, mock_init_views, tmp_path)
     assert group.welcome_action_id == "ACT-100"
 
 
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
-def test_save_action_unchecking_clears_welcome_action_id(mock_ctk, mock_init_views, tmp_path):
+def test_save_action_unchecking_clears_welcome_action_id(
+    mock_ctk, mock_init_views, mock_refresh_caseload, mock_showinfo, tmp_path
+):
     """Verify that unchecking clears group.welcome_action_id back to None."""
     controller = AppController()
     controller.group_repo = GroupRepository(data_file=tmp_path / "groups.json")
@@ -90,10 +110,14 @@ def test_save_action_unchecking_clears_welcome_action_id(mock_ctk, mock_init_vie
     assert group.welcome_action_id is None
 
 
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("src.controllers.app_controller.messagebox.askyesno", return_value=True)
-def test_save_action_replaces_existing_welcome_action_confirmed(mock_askyesno, mock_ctk, mock_init_views, tmp_path):
+def test_save_action_replaces_existing_welcome_action_confirmed(
+    mock_askyesno, mock_ctk, mock_init_views, mock_refresh_caseload, mock_showinfo, tmp_path
+):
     """Verify replacing an existing welcome action when user confirms the popup."""
     controller = AppController()
     controller.group_repo = GroupRepository(data_file=tmp_path / "groups.json")
@@ -115,10 +139,13 @@ def test_save_action_replaces_existing_welcome_action_confirmed(mock_askyesno, m
     assert group.welcome_action_id == "ACT-200"
 
 
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("src.controllers.app_controller.messagebox.askyesno", return_value=False)
-def test_save_action_replaces_existing_welcome_action_cancelled(mock_askyesno, mock_ctk, mock_init_views, tmp_path):
+def test_save_action_replaces_existing_welcome_action_cancelled(
+    mock_askyesno, mock_ctk, mock_init_views, mock_refresh_caseload, tmp_path
+):
     """Verify save is aborted if user cancels the replacement prompt."""
     controller = AppController()
     controller.group_repo = GroupRepository(data_file=tmp_path / "groups.json")
@@ -140,11 +167,14 @@ def test_save_action_replaces_existing_welcome_action_cancelled(mock_askyesno, m
     assert group.welcome_action_id == "ACT-100"  # Unchanged
 
 
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("src.controllers.app_controller.messagebox.askokcancel", return_value=True)
 @patch("src.controllers.app_controller.messagebox.showinfo")
-def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, mock_ctk, mock_init_views, tmp_path):
+def test_delete_group_cascades_to_its_actions(
+    mock_showinfo, mock_askokcancel, mock_ctk, mock_init_views, mock_refresh_caseload, tmp_path
+):
     """Deleting a group must also delete the actions assigned to it, rather
     than leaving them pointing at a group_id that no longer exists."""
     controller = AppController()
@@ -172,10 +202,11 @@ def test_delete_group_cascades_to_its_actions(mock_showinfo, mock_askokcancel, m
     assert group.name not in remaining_group_names
 
 
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("src.controllers.app_controller.messagebox.showwarning")
-def test_handle_rename_group_refuses_to_edit_general(mock_showwarning, mock_ctk, mock_init_views):
+def test_handle_rename_group_refuses_to_edit_general(mock_showwarning, mock_ctk, mock_init_views, mock_refresh_caseload):
     """'General' can't be edited at all (same protection as rename/delete) -
     execution must never reach real dialog construction for it."""
     controller = AppController()
@@ -186,10 +217,13 @@ def test_handle_rename_group_refuses_to_edit_general(mock_showwarning, mock_ctk,
     mock_showwarning.assert_called_once()
 
 
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("src.controllers.app_controller.messagebox.showerror")
-def test_handle_rename_group_reports_a_missing_group_without_opening_a_dialog(mock_showerror, mock_ctk, mock_init_views):
+def test_handle_rename_group_reports_a_missing_group_without_opening_a_dialog(
+    mock_showerror, mock_ctk, mock_init_views, mock_refresh_caseload
+):
     controller = AppController()
     controller.groups = []  # the requested group doesn't exist
 
@@ -281,8 +315,9 @@ def test_handle_run_action_opens_review_dialog_with_matches_then_runs_on_confirm
     mock_showinfo.assert_called_once()
 
 
+@patch("src.controllers.app_controller.messagebox.showinfo")
 @patch("controllers.app_controller.ReviewSendModal")
-def test_handle_run_action_non_email_action_does_not_pass_content_overrides(mock_modal):
+def test_handle_run_action_non_email_action_does_not_pass_content_overrides(mock_modal, mock_showinfo):
     controller = MagicMock()
     action = Action(name="Text Only", group_id="G1", is_email=False, is_text=True)
     controller.scenarios_raw = {"Text Only": action}
@@ -427,11 +462,12 @@ def test_handle_send_welcome_emails_only_includes_groups_with_a_valid_welcome_ac
     mock_showinfo.assert_called_once()
 
 
+@patch.object(AppController, "_refresh_caseload_at_startup")
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch("controllers.app_controller.BatchRunModal")
 def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wired(
-    mock_modal, mock_ctk, mock_init_views, tmp_path
+    mock_modal, mock_ctk, mock_init_views, mock_refresh_caseload, tmp_path
 ):
     """Uses a real AppController (same pattern as every other controller
     test here) rather than a bare MagicMock 'self' - handle_open_batch_runner
@@ -451,6 +487,8 @@ def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wire
     controller = AppController()
     controller.action_repo = ActionRepository(data_file=tmp_path / "actions.json")
     saved_action = controller.action_repo.save_action(Action(name="A1", group_id="G1"))
+    controller.saved_batch_repo = SavedBatchRepository(data_file=tmp_path / "saved_batches.json")
+    saved_batch = controller.saved_batch_repo.save_batch("Weekly Follow-ups", [saved_action.id])
     controller.groups = [Group(name="Group A", group_id="G1")]
     controller.right_workspace = MagicMock()
 
@@ -461,3 +499,110 @@ def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wire
     assert [a.id for a in kwargs["actions"]] == [saved_action.id]
     assert kwargs["groups"] == controller.groups
     assert kwargs["on_run"] == controller._handle_run_batch
+    assert [b.id for b in kwargs["saved_batches"]] == [saved_batch.id]
+    assert kwargs["on_save_batch"] == controller._handle_save_batch
+    assert kwargs["on_delete_batch"] == controller._handle_delete_batch
+
+
+def test_handle_save_batch_persists_via_saved_batch_repo(tmp_path):
+    controller = AppController.__new__(AppController)
+    controller.saved_batch_repo = SavedBatchRepository(data_file=tmp_path / "saved_batches.json")
+
+    saved = controller._handle_save_batch("Weekly Follow-ups", ["A1", "A2"])
+
+    assert saved.name == "Weekly Follow-ups"
+    assert saved.action_ids == ["A1", "A2"]
+    assert [b.id for b in controller.saved_batch_repo.load_batches()] == [saved.id]
+
+
+def test_handle_delete_batch_removes_via_saved_batch_repo(tmp_path):
+    controller = AppController.__new__(AppController)
+    controller.saved_batch_repo = SavedBatchRepository(data_file=tmp_path / "saved_batches.json")
+    saved = controller.saved_batch_repo.save_batch("Weekly Follow-ups", ["A1"])
+
+    controller._handle_delete_batch(saved.id)
+
+    assert controller.saved_batch_repo.load_batches() == []
+
+
+# --- StudentDataProvider wiring ---------------------------------------------
+
+@patch.object(AppController, "_refresh_caseload_at_startup")
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+def test_student_data_provider_is_a_caching_playwright_provider(mock_ctk, mock_init_views, mock_refresh_caseload):
+    """The composition root must wrap the real (slow, live) provider in the
+    cache, not use it bare - see CachingStudentDataProvider's docstring for
+    why a bare PlaywrightStudentDataProvider would make batch reviews
+    unusably slow."""
+    controller = AppController()
+
+    assert isinstance(controller.student_data_provider, CachingStudentDataProvider)
+    real = controller.student_data_provider._real_provider
+    assert isinstance(real, PlaywrightStudentDataProvider)
+    assert real.report_url == CASELOAD_APP_URL
+    assert real.export_button_selector == EXPORT_BUTTON_SELECTOR
+
+
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch.object(PlaywrightStudentDataProvider, "get_students")
+def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock_ctk, mock_init_views):
+    """_refresh_caseload_at_startup runs for real here (not patched out) -
+    only the live Playwright call underneath it is faked, so this proves
+    the eager-fetch-on-launch wiring actually populates the cache during
+    __init__, not just that the method exists."""
+    jane = Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test")
+    mock_get_students.return_value = [jane]
+
+    controller = AppController()
+
+    # A second get_students() call must be served from cache, not trigger
+    # a second live fetch - proves _refresh_caseload_at_startup actually
+    # populated CachingStudentDataProvider's cache, not just called through.
+    assert controller.student_data_provider.get_students() == [jane]
+    mock_get_students.assert_called_once()
+
+
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+@patch.object(PlaywrightStudentDataProvider, "get_students", side_effect=RuntimeError("session expired"))
+def test_refresh_caseload_at_startup_failure_does_not_crash_app_construction(
+    mock_get_students, mock_ctk, mock_init_views
+):
+    """A failed fetch at startup (e.g. an expired session on first launch
+    of the day) must be logged, not left to crash AppController() entirely -
+    the professor should still get a usable app and can retry via Refresh
+    Caseload once the session is fixed."""
+    controller = AppController()  # must not raise
+
+    assert controller.student_data_provider._cache is None
+
+
+def test_handle_refresh_requested_shows_the_new_student_count_on_success():
+    controller = AppController.__new__(AppController)
+    controller.activity_logger = MagicMock()
+    fake_provider = MagicMock()
+    fake_provider.refresh.return_value = [MagicMock(), MagicMock()]
+    controller.student_data_provider = fake_provider
+
+    with patch("src.controllers.app_controller.messagebox.showinfo") as mock_showinfo:
+        controller.handle_refresh_requested()
+
+    fake_provider.refresh.assert_called_once()
+    mock_showinfo.assert_called_once()
+    assert "2" in mock_showinfo.call_args[0][1]
+
+
+def test_handle_refresh_requested_shows_an_error_on_failure():
+    controller = AppController.__new__(AppController)
+    controller.activity_logger = MagicMock()
+    fake_provider = MagicMock()
+    fake_provider.refresh.side_effect = RuntimeError("session expired")
+    controller.student_data_provider = fake_provider
+
+    with patch("src.controllers.app_controller.messagebox.showerror") as mock_showerror:
+        controller.handle_refresh_requested()
+
+    mock_showerror.assert_called_once()
+    assert "session expired" in mock_showerror.call_args[0][1]

@@ -16,7 +16,8 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import fields
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+from urllib.parse import urlparse
 
 from src.models.student import Student
 from src.services.csv_student_import import parse_students_csv
@@ -24,6 +25,15 @@ from src.services.salesforce_browser_session import open_authenticated_context
 from src.services.task_utils import get_latest_task_number
 
 _STUDENT_FIELD_NAMES = {f.name for f in fields(Student)}
+
+
+def _looks_like_a_different_host(original_url: str, landed_url: str) -> bool:
+    """True if navigating to `original_url` actually landed somewhere with a
+    different host - the signature of a saved-but-expired session getting
+    redirected to an SSO login page instead of the target Salesforce app.
+    A pure function on purpose so this can be unit-tested without a real
+    browser (see test_student_data_provider.py)."""
+    return urlparse(landed_url).netloc != urlparse(original_url).netloc
 
 
 class StudentDataProvider(ABC):
@@ -114,6 +124,8 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
         self.headless = headless
 
     def get_students(self) -> List[Student]:
+        import shutil
+
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
@@ -121,13 +133,74 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
             try:
                 page = context.new_page()
                 page.goto(self.report_url)
+
+                # A saved-but-expired session gets redirected to WGU's SSO
+                # login instead of the report page - left unchecked, the
+                # click below just times out after 30s with a bare
+                # Playwright TimeoutError, which is exactly what happened
+                # live once already (see src/CLAUDE.md) and gives no hint
+                # what actually went wrong. Catch it here with a clear,
+                # actionable message instead.
+                if _looks_like_a_different_host(self.report_url, page.url):
+                    raise RuntimeError(
+                        f"Expected to land on {self.report_url!r} but got redirected to "
+                        f"{page.url!r} instead - the saved Salesforce session has "
+                        f"likely expired. Run scripts/salesforce_login.py to log in "
+                        f"again, then retry."
+                    )
+
                 with page.expect_download() as download_info:
                     page.click(self.export_button_selector)
                 download = download_info.value
 
-                csv_path = Path(tempfile.mkdtemp()) / download.suggested_filename
-                download.save_as(str(csv_path))
+                # A fresh temp dir per call, deleted right after parsing -
+                # this CSV is a full roster export (real student PII), and
+                # per the developer's explicit FERPA constraint nothing here
+                # may linger on disk beyond the moment it's needed.
+                csv_dir = Path(tempfile.mkdtemp())
+                try:
+                    csv_path = csv_dir / download.suggested_filename
+                    download.save_as(str(csv_path))
+                    return parse_students_csv(csv_path)
+                finally:
+                    shutil.rmtree(csv_dir, ignore_errors=True)
             finally:
                 context.browser.close()
 
-        return parse_students_csv(csv_path)
+
+class CachingStudentDataProvider(StudentDataProvider):
+    """Wraps a real (usually slow/live) StudentDataProvider and serves a
+    single in-session snapshot instead of re-fetching on every call.
+
+    Several call sites each independently call get_students() during normal
+    use - a single Action's review dialog, EVERY item in a batch review
+    (once per action), running an action. Without this, a batch review of N
+    actions would trigger N separate live Salesforce fetches back-to-back,
+    each a real ~20s+ browser round trip - confirmed painfully slow in
+    practice. This wrapper fetches once and reuses that snapshot until
+    explicitly told to refresh() - wired to the "Refresh Caseload" nav
+    button, since the roster changes throughout the day at the source and a
+    forever-stale cache isn't acceptable either.
+
+    FERPA constraint (explicit, from the developer, 2026-09-03): no student
+    data may persist across app sessions. The cache lives ONLY in memory for
+    the life of this Python process - nothing here is ever written to disk,
+    and the cache simply ceases to exist when the app closes."""
+
+    def __init__(self, real_provider: StudentDataProvider):
+        self._real_provider = real_provider
+        self._cache: Optional[List[Student]] = None
+
+    def get_students(self) -> List[Student]:
+        if self._cache is None:
+            self.refresh()
+        return self._cache
+
+    def refresh(self) -> List[Student]:
+        """Forces a fresh fetch from the wrapped provider, replacing
+        whatever was cached. Returns the new snapshot. A failed fetch
+        leaves the cache as it was (None if this is the first attempt) -
+        the next get_students() call will simply retry rather than getting
+        stuck on a permanently-empty cache."""
+        self._cache = self._real_provider.get_students()
+        return self._cache

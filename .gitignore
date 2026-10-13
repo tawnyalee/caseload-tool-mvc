@@ -9,7 +9,15 @@ logs/
 data/templates.json
 src/data/actions.json
 src/data/groups.json
+src/data/saved_batches.json
 
 # Saved Salesforce browser session (Playwright storage_state) - as
 # sensitive as a password, holds live login cookies. Never commit.
 data/.salesforce_session.json
+
+# Saved Mongoose browser session (Playwright storage_state) - same
+# sensitivity/reasoning as the Salesforce one above. Never commit.
+data/.mongoose_session.json
+
+# Persisted StudentID -> Mongoose Contact Id map - derived, per-install data.
+src/data/mongoose_contact_ids.json

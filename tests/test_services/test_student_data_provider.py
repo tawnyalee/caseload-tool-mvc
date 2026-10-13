@@ -1,13 +1,18 @@
 import json
+from pathlib import Path
 
 import pytest
 
+import src.services.student_data_provider as sdp
 from src.models.student import Student
 from src.services import salesforce_browser_session as sbs
 from src.services.student_data_provider import (
+    CachingStudentDataProvider,
     CsvStudentDataProvider,
     FakeStudentDataProvider,
     PlaywrightStudentDataProvider,
+    StudentDataProvider,
+    _looks_like_a_different_host,
 )
 
 
@@ -189,3 +194,134 @@ def test_playwright_provider_raises_a_clear_error_when_no_session_saved(tmp_path
 
     with pytest.raises(RuntimeError, match="salesforce_login.py"):
         provider.get_students()
+
+
+def test_playwright_provider_cleans_up_the_downloaded_csvs_temp_dir(tmp_path, monkeypatch):
+    """The downloaded roster CSV is real student PII - per the developer's
+    explicit FERPA constraint, its temp directory must not linger on disk
+    after parsing, success or failure."""
+    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
+    sbs.STORAGE_STATE_PATH.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+
+    csv_content = "StudentID,StudentEmail,Name,CourseCode\nSF1,jane@example.test,Jane Doe,D424\n"
+    html_path = tmp_path / "report.html"
+    html_path.write_text(
+        _EXPORT_PAGE_HTML.format(csv_js_string=json.dumps(csv_content)), encoding="utf-8"
+    )
+
+    created_dirs = []
+    real_mkdtemp = sdp.tempfile.mkdtemp
+
+    def _tracking_mkdtemp(*args, **kwargs):
+        created = real_mkdtemp(*args, **kwargs)
+        created_dirs.append(created)
+        return created
+
+    monkeypatch.setattr(sdp.tempfile, "mkdtemp", _tracking_mkdtemp)
+
+    provider = PlaywrightStudentDataProvider(
+        report_url=f"file:///{html_path.as_posix()}",
+        export_button_selector="#export-btn",
+        headless=True,
+    )
+    provider.get_students()
+
+    assert created_dirs, "expected the CSV download to have created a temp dir"
+    assert not Path(created_dirs[0]).exists()
+
+
+def test_looks_like_a_different_host_true_on_sso_redirect():
+    """The exact failure mode hit live once already: an expired session
+    getting redirected from the Salesforce app to WGU's SSO login page."""
+    assert _looks_like_a_different_host(
+        "https://srm.lightning.force.com/lightning/n/Caseload_App_Page",
+        "https://access.wgu.edu/pingfed/idp/SSO.saml2",
+    ) is True
+
+
+def test_looks_like_a_different_host_false_when_staying_on_the_same_host():
+    assert _looks_like_a_different_host(
+        "https://srm.lightning.force.com/lightning/n/Caseload_App_Page",
+        "https://srm.lightning.force.com/lightning/n/Caseload_App_Page?overrideNavRules=true",
+    ) is False
+
+
+# --- CachingStudentDataProvider ---------------------------------------------
+
+class _ScriptedProvider(StudentDataProvider):
+    """A StudentDataProvider whose get_students() returns/raises whatever
+    was scripted for that call number, so CachingStudentDataProvider's
+    fetch-once/refresh/retry-after-failure behavior can be tested without a
+    real (or fake-but-slow) underlying provider."""
+
+    def __init__(self, scripted_results):
+        self._scripted_results = list(scripted_results)
+        self.call_count = 0
+
+    def get_students(self):
+        self.call_count += 1
+        result = self._scripted_results[self.call_count - 1]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def _student(sid: str, first: str, last: str) -> Student:
+    return Student(salesforce_id=sid, first_name=first, last_name=last, email=f"{first}@example.test")
+
+
+def test_caching_provider_fetches_once_and_reuses_the_cache():
+    jane = _student("SF1", "Jane", "Doe")
+    real = _ScriptedProvider([[jane]])
+    provider = CachingStudentDataProvider(real)
+
+    first = provider.get_students()
+    second = provider.get_students()
+
+    assert first == [jane]
+    assert second == [jane]
+    assert real.call_count == 1
+
+
+def test_caching_provider_refresh_forces_a_new_fetch():
+    jane = _student("SF1", "Jane", "Doe")
+    john = _student("SF2", "John", "Roe")
+    real = _ScriptedProvider([[jane], [jane, john]])
+    provider = CachingStudentDataProvider(real)
+    provider.get_students()
+
+    refreshed = provider.refresh()
+
+    assert refreshed == [jane, john]
+    assert provider.get_students() == [jane, john]
+    assert real.call_count == 2
+
+
+def test_caching_provider_a_failed_fetch_leaves_cache_empty_so_the_next_call_retries():
+    jane = _student("SF1", "Jane", "Doe")
+    real = _ScriptedProvider([RuntimeError("session expired"), [jane]])
+    provider = CachingStudentDataProvider(real)
+
+    with pytest.raises(RuntimeError, match="session expired"):
+        provider.get_students()
+
+    # NOT permanently stuck on failure - the next call retries rather than
+    # caching an error state or an empty list.
+    assert provider.get_students() == [jane]
+    assert real.call_count == 2
+
+
+def test_caching_provider_a_failed_refresh_does_not_clobber_a_good_cache():
+    jane = _student("SF1", "Jane", "Doe")
+    real = _ScriptedProvider([[jane], RuntimeError("session expired")])
+    provider = CachingStudentDataProvider(real)
+    provider.get_students()  # populates the cache with [jane]
+
+    with pytest.raises(RuntimeError, match="session expired"):
+        provider.refresh()
+
+    # A failed manual "Refresh Caseload" click shouldn't wipe out an
+    # already-good roster - the professor can keep working with what's
+    # cached until a retry succeeds.
+    assert provider.get_students() == [jane]
+    assert real.call_count == 2
