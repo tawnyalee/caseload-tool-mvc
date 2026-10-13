@@ -3,8 +3,10 @@
 StudentDataProvider.
 
 Per student: email and text are attempted independently of each other (one
-failing doesn't block the other). A note step is attempted only if at least
-one of them succeeded — if none did, it's skipped, not attempted. The note
+failing doesn't block the other). A note step is attempted only if the email
+succeeded — if it didn't, the note is skipped, not attempted. Texts never
+trigger a note: Mongoose writes its own note for every text at the end of
+the day, so a text-only action has no note step at all. The note
 step covers both writing an interaction note (if note_subject/note_body are
 set) and updating the student's roster-visible follow-up-note field (if
 follow_up_note is set) as a single unit. No single student's failure stops
@@ -151,12 +153,18 @@ class ActionRunner:
             self.activity_logger.log(f"Filters matched {matched_count} of {len(all_students)} students")
         self.activity_logger.log(f"'{action.name}' is currently running for {len(students)} students")
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
+        # Only email gets a note: Mongoose writes its own note for every text
+        # at the end of the day, so a text-only action never writes one here.
+        writes_note = has_note_content and action.is_email
+        if has_note_content and not action.is_email:
+            self.activity_logger.log(
+                "Note step not run — this action doesn't send email, and texts are noted automatically by Mongoose"
+            )
         summary = ActionRunSummary()
 
         for student in students:
             self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
             email_ok = False
-            text_ok = False
 
             if action.is_email:
                 result = self._attempt_email(
@@ -167,12 +175,10 @@ class ActionRunner:
                 email_ok = result.outcome == "success"
 
             if action.is_text:
-                result = self._attempt_text(student, action)
-                summary.results.append(result)
-                text_ok = result.outcome == "success"
+                summary.results.append(self._attempt_text(student, action))
 
-            if has_note_content:
-                if email_ok or text_ok:
+            if writes_note:
+                if email_ok:
                     summary.results.append(
                         self._attempt_note(
                             student, action.note_subject, action.note_body, action.follow_up_note,
@@ -180,7 +186,7 @@ class ActionRunner:
                         )
                     )
                 else:
-                    detail = "No successful communication for this student"
+                    detail = "Email was not sent successfully"
                     self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
                     summary.results.append(
                         StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
@@ -305,7 +311,7 @@ class ActionRunner:
                         self._attempt_note(student, note_subject, note_body, follow_up_note)
                     )
                 else:
-                    detail = "No successful communication for this student"
+                    detail = "Email was not sent successfully"
                     self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
                     summary.results.append(
                         StepResult(student=student, step_type="note", outcome="skipped", detail=detail)

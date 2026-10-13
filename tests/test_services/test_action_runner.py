@@ -274,6 +274,33 @@ def test_both_communication_channels_failing_skips_the_note(tmp_path):
     assert summary.skipped_steps[0].student.salesforce_id == "SF1"
 
 
+def test_text_success_alone_does_not_write_a_note(tmp_path):
+    # Mongoose notes texts itself, so only a successful email earns a note.
+    students = _make_students()
+    runner, template, _, _, note_writer = _make_runner(tmp_path, students, email_fail_for={"jane@example.test"})
+    action = _make_action(template.id)
+
+    summary = runner.run(action, group_name="Test Group")
+
+    jane_results = [r for r in summary.results if r.student.salesforce_id == "SF1"]
+    outcomes = {r.step_type: r.outcome for r in jane_results}
+    assert outcomes == {"email": "failed", "text": "success", "note": "skipped"}
+    assert "SF1" not in [n["salesforce_id"] for n in note_writer.written]
+
+
+def test_text_only_action_has_no_note_steps_at_all(tmp_path):
+    students = _make_students()
+    runner, template, _, _, note_writer = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_email=False, is_text=True, follow_up_note="Texted")
+
+    summary = runner.run(action, group_name="Test Group")
+
+    assert [r.step_type for r in summary.results] == ["text", "text", "text"]
+    assert summary.skipped == 0
+    assert note_writer.written == []
+    assert note_writer.follow_up_notes == {}
+
+
 def test_no_note_content_means_no_note_steps_at_all(tmp_path):
     students = _make_students()
     runner, template, *_ = _make_runner(tmp_path, students)
