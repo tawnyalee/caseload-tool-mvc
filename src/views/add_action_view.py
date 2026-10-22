@@ -520,9 +520,17 @@ class AddActionView(ctk.CTkFrame):
         filter field's multi-select options are built from."""
         if self.student_data_provider is None:
             return []
+        try:
+            students = self.student_data_provider.get_students()
+        except Exception:
+            # Roster not loaded (e.g. not logged in to Salesforce): the
+            # dropdown just has no suggestions - editing the action must
+            # still work. Before 2026-10-22 this silently blocked opening
+            # the editor for any action with such a filter.
+            return []
         values = {
             getattr(student, field_name, "").strip()
-            for student in self.student_data_provider.get_students()
+            for student in students
             if getattr(student, field_name, "").strip()
         }
         return sorted(values)

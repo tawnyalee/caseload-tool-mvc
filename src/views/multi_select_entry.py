@@ -17,7 +17,7 @@ class MultiSelectEntry(ctk.CTkFrame):
 
     def __init__(self, master, options: List[str], **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
-        self._all_options = options
+        self._all_options = list(options)  # own copy - set_selected may add to it
         self._selected: set = set()
 
         self.summary = ctk.CTkEntry(self, width=150)
@@ -33,7 +33,16 @@ class MultiSelectEntry(ctk.CTkFrame):
         return [option for option in self._all_options if option in self._selected]
 
     def set_selected(self, values: Iterable[str]) -> None:
-        self._selected = {v for v in values if v in self._all_options}
+        """A value that isn't in the current options is KEPT (and added as
+        an option), not dropped: options built from the live roster can be
+        empty or missing a saved value (roster not loaded yet, or no current
+        student has it today). Dropping it would silently erase that part of
+        a saved filter on the next Save - found 2026-10-22."""
+        values = list(values)
+        for value in values:
+            if value not in self._all_options:
+                self._all_options.append(value)
+        self._selected = set(values)
         self._refresh_summary()
 
     def _refresh_summary(self) -> None:

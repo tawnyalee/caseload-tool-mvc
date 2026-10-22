@@ -42,6 +42,7 @@ def _runs_synchronously(controller):
     away on this thread so the test can check the result directly. The
     real threading is covered by test_background_worker.py."""
     controller._is_busy_and_told_user = lambda: False
+    controller._caseload_missing_and_told_user = lambda: False
 
     def run_now(title, work, on_finished, on_failed=None, stoppable=True, status=""):
         try:
@@ -853,3 +854,50 @@ def test_closing_the_app_when_idle_just_closes(mock_ask):
     AppController._on_close_requested(controller)
     mock_ask.assert_not_called()
     controller.root.destroy.assert_called_once()
+
+
+# --- Safety net for errors behind buttons -----------------------------------
+
+@patch("controllers.app_controller.messagebox.showerror")
+def test_unexpected_callback_errors_are_logged_and_shown_not_silent(mock_showerror):
+    controller = _bare_controller()
+    try:
+        raise RuntimeError('Not logged in to Salesforce. Click "Refresh Caseload" to log in.')
+    except RuntimeError as exc:
+        AppController._on_unexpected_error(controller, type(exc), exc, exc.__traceback__)
+
+    logged = controller.activity_logger.log.call_args[0][0]
+    assert logged.startswith("[UNEXPECTED ERROR] RuntimeError: Not logged in")
+    assert "Traceback" in logged
+    assert "Not logged in to Salesforce" in mock_showerror.call_args[0][1]
+
+
+@patch.object(AppController, "_refresh_caseload_at_startup")
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+def test_the_safety_net_is_installed_on_the_window(mock_ctk, mock_init_views, mock_refresh):
+    controller = AppController()
+    assert controller.root.report_callback_exception == controller._on_unexpected_error
+
+
+
+# --- Only running needs the roster -------------------------------------------
+
+@patch("controllers.app_controller.messagebox.showinfo")
+def test_run_buttons_explain_when_the_caseload_is_not_loaded(mock_showinfo):
+    controller = _bare_controller()
+    controller.student_data_provider = MagicMock(is_loaded=False)
+    controller.action_runner = MagicMock()
+
+    AppController.handle_send_ad_hoc_email(controller, subject="S", body="B")
+
+    controller.action_runner.student_provider.get_students.assert_not_called()
+    assert "Refresh Caseload" in mock_showinfo.call_args[0][1]
+
+
+@patch("controllers.app_controller.messagebox.showinfo")
+def test_run_buttons_proceed_when_the_caseload_is_loaded(mock_showinfo):
+    controller = _bare_controller()
+    controller.student_data_provider = MagicMock(is_loaded=True)
+    assert AppController._caseload_missing_and_told_user(controller) is False
+    mock_showinfo.assert_not_called()

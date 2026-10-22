@@ -185,6 +185,12 @@ class CachingStudentDataProvider(StudentDataProvider):
             self.refresh()
         return self._cache
 
+    @property
+    def is_loaded(self) -> bool:
+        """Whether a roster has been fetched this session (False e.g. when
+        Salesforce login failed at startup)."""
+        return self._cache is not None
+
     def refresh(self) -> List[Student]:
         """Forces a fresh fetch from the wrapped provider, replacing
         whatever was cached. Returns the new snapshot. A failed fetch

@@ -72,6 +72,9 @@ class AppController:
     # region Initialization
     def __init__(self) -> None:
         self.root: ctk.CTk = ctk.CTk()
+        # Any error escaping a button/menu callback lands here instead of
+        # vanishing into a console the packaged .exe doesn't have.
+        self.root.report_callback_exception = self._on_unexpected_error
 
         # Sends, notes and caseload loads run on one background thread so
         # the window keeps responding (see background_worker.py). Only one
@@ -404,7 +407,7 @@ class AppController:
         self.switch_workspace_view(DashboardView, controller=self)
 
     def handle_send_welcome_emails(self) -> None:
-        if self._is_busy_and_told_user():
+        if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
         actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
         eligible_groups = [g for g in self.groups if g.welcome_action_id and g.welcome_action_id in actions_by_id]
@@ -458,7 +461,7 @@ class AppController:
         modal - the email and note fields live on the dashboard itself).
         Opens the pre-send review dialog first; the actual send only
         happens if the professor confirms it there."""
-        if self._is_busy_and_told_user():
+        if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
         students = self.action_runner.student_provider.get_students()
 
@@ -518,7 +521,7 @@ class AppController:
         self.saved_batch_repo.delete_batch(batch_id)
 
     def _handle_run_batch(self, actions, group_names) -> None:
-        if self._is_busy_and_told_user():
+        if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
         items = list(zip(actions, group_names))
         review_items = [
@@ -581,7 +584,7 @@ class AppController:
         )
 
     def handle_run_action(self, action_name: str) -> None:
-        if self._is_busy_and_told_user():
+        if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
         action = self.scenarios_raw.get(action_name)
         if action is None or not hasattr(action, "id"):
@@ -1172,7 +1175,37 @@ class AppController:
             return
         self.root.destroy()
 
+    def _on_unexpected_error(self, exc_type, exc, tb) -> None:
+        """Tk's hook for errors escaping any callback (a button that hits a
+        bug, a dialog that can't open). Without it the click just silently
+        does nothing in the .exe - found 2026-10-22 when Edit did nothing
+        for an action whose filter needed the (not loaded) roster."""
+        import traceback
+
+        details = "".join(traceback.format_exception(exc_type, exc, tb))
+        logger = getattr(self, "activity_logger", None)
+        if logger:
+            logger.log(f"[UNEXPECTED ERROR] {exc_type.__name__}: {exc}\n{details}")
+        messagebox.showerror(
+            "Something went wrong",
+            f"{exc}\n\nThe details were saved to today's log.",
+        )
+
     # region Background runs
+    def _caseload_missing_and_told_user(self) -> bool:
+        """True (after explaining) if the roster isn't loaded - e.g. the
+        Salesforce login failed or was skipped at startup. Only RUNNING
+        needs the roster; every window (editing groups/actions/templates)
+        works without it, so a first session can be all setup."""
+        if getattr(self.student_data_provider, "is_loaded", True):
+            return False
+        messagebox.showinfo(
+            "Caseload not loaded",
+            "The caseload isn't loaded yet, so there's no one to send to.\n\n"
+            "Click \"Refresh Caseload\" to log in to Salesforce, then try again.",
+        )
+        return True
+
     def _is_busy_and_told_user(self) -> bool:
         """True (after telling the professor) if a run or refresh is already
         going - only one at a time."""

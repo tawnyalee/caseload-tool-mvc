@@ -147,3 +147,13 @@ def test_remove_button_calls_callback_and_destroys_row(ctk_root):
     row = FilterRow(master=ctk_root, on_remove=lambda r: removed.append(r))
     row._handle_remove()
     assert removed == [row]
+
+
+def test_saved_choice_missing_from_todays_options_is_kept_not_dropped(ctk_root):
+    """A live-roster dropdown may not include a saved value today (no
+    current student in that course, or roster not loaded). It must survive
+    so saving the action doesn't silently widen its filter."""
+    from src.views.multi_select_entry import MultiSelectEntry
+    picker = MultiSelectEntry(ctk_root, options=["D424", "D425"])
+    picker.set_selected(["C769", "D424"])
+    assert set(picker.get_selected()) == {"C769", "D424"}

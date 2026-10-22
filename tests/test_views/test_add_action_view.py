@@ -297,3 +297,24 @@ def test_editing_a_text_only_action_keeps_its_saved_note_content(ctk_root):
     assert data["note_subject"] == "Old subject"
     assert data["note_body"] == "Old body"
     assert data["follow_up_note"] == "Old follow-up"
+
+
+class _NotLoggedInProvider:
+    def get_students(self):
+        raise RuntimeError('Not logged in to Salesforce. Click "Refresh Caseload" to log in.')
+
+
+def test_editing_an_action_with_a_roster_filter_still_opens_when_roster_is_not_loaded(ctk_root):
+    """Regression: with PingID down (roster never loaded), Edit silently did
+    nothing for any action with a filter whose dropdown is filled from the
+    roster."""
+    action_data = {
+        "group_name": "Group A",
+        "filters": [{"field": "course_code", "operator": "IsOneOf", "value": ["C769"]}],
+    }
+    view = AddActionView(
+        master=ctk_root, controller=MockControllerWithStudents(_NotLoggedInProvider()),
+        groups=["Group A"], action_data=action_data,
+    )
+    assert len(view.filter_rows) == 1
+    assert view.get_action_data()["filters"] == action_data["filters"]

@@ -323,3 +323,13 @@ def test_caching_provider_a_failed_refresh_does_not_clobber_a_good_cache():
     # cached until a retry succeeds.
     assert provider.get_students() == [jane]
     assert real.call_count == 2
+
+
+def test_caching_provider_reports_whether_a_roster_is_loaded():
+    class _Ok(StudentDataProvider):
+        def get_students(self):
+            return []
+    cache = CachingStudentDataProvider(_Ok())
+    assert cache.is_loaded is False
+    cache.refresh()
+    assert cache.is_loaded is True
