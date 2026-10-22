@@ -6,3 +6,4 @@ pytest-timeout
 simple-salesforce
 playwright
 tzdata
+pyinstaller

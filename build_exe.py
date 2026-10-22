@@ -1,0 +1,65 @@
+# build_exe.py
+"""Builds the app into a folder you can zip up and share:
+
+    python build_exe.py
+
+Output: dist/CaseloadTool/ - run dist/CaseloadTool/CaseloadTool.exe.
+To share it, zip the WHOLE CaseloadTool folder (the .exe needs the files
+next to it). Professors don't need Python installed.
+
+Decisions behind this (developer's calls, 2026-10-22):
+  - One FOLDER, not a single .exe: starts faster (a one-file .exe unpacks
+    itself on every launch) and is less likely to trip antivirus.
+  - No browser bundled: the app drives the Microsoft Edge already on
+    every Windows machine (see src/services/browser_launch.py). Only
+    Playwright's small driver is bundled (Playwright's own PyInstaller
+    hook does that automatically).
+  - Per-user data lives in %LOCALAPPDATA%\\CaseloadTool, never in this
+    folder (see src/services/app_paths.py), so replacing the folder with
+    a newer build never touches anyone's groups/actions/templates.
+
+PyInstaller is a developer-only tool (pip install pyinstaller).
+"""
+import shutil
+from pathlib import Path
+
+import PyInstaller.__main__
+
+ROOT = Path(__file__).resolve().parent
+APP_NAME = "CaseloadTool"
+
+
+def main() -> None:
+    # Start clean so a file removed from the project doesn't linger in the build.
+    for leftover in (ROOT / "build", ROOT / "dist" / APP_NAME):
+        shutil.rmtree(leftover, ignore_errors=True)
+
+    PyInstaller.__main__.run([
+        str(ROOT / "main.py"),
+        "--name", APP_NAME,
+        "--onedir",
+        "--windowed",  # no black console window behind the app
+        "--noconfirm",
+        # Read-only files the app ships with (found via app_paths.resource_path).
+        "--add-data", f"{ROOT / 'src' / 'assets' / 'quill'};src/assets/quill",
+        # CustomTkinter's themes/fonts and the time-zone database are data
+        # files, not code - make sure they're included.
+        "--collect-data", "customtkinter",
+        "--collect-data", "tzdata",
+        # Modules only imported inside functions (so PyInstaller's scan can
+        # miss them): Outlook automation and the Salesforce/Mongoose browser.
+        "--hidden-import", "win32com.client",
+        "--hidden-import", "pythoncom",
+        "--hidden-import", "playwright.sync_api",
+        # Developer/test-only packages - keep them out of the build.
+        "--exclude-module", "pytest",
+        "--exclude-module", "simple_salesforce",
+        "--distpath", str(ROOT / "dist"),
+        "--workpath", str(ROOT / "build"),
+        "--specpath", str(ROOT / "build"),
+    ])
+    print(f"\nBuilt: {ROOT / 'dist' / APP_NAME / (APP_NAME + '.exe')}")
+
+
+if __name__ == "__main__":
+    main()

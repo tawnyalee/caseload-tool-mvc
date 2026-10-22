@@ -25,3 +25,7 @@ src/data/mongoose_contact_ids.json
 # Test mode switch (see src/services/test_mode.py) - per machine, holds a
 # personal email address. Never commit.
 data/test_mode.json
+
+# PyInstaller output (python build_exe.py) - rebuilt on demand, never committed.
+build/
+dist/
