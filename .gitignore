@@ -11,8 +11,8 @@ src/data/actions.json
 src/data/groups.json
 src/data/saved_batches.json
 
-# Saved Salesforce browser session (Playwright storage_state) - as
-# sensitive as a password, holds live login cookies. Never commit.
+# Old saved Salesforce session file - no longer created (the login now
+# lives in memory only), kept ignored in case an old copy is ever restored.
 data/.salesforce_session.json
 
 # Saved Mongoose browser session (Playwright storage_state) - same
@@ -21,3 +21,7 @@ data/.mongoose_session.json
 
 # Persisted StudentID -> Mongoose Contact Id map - derived, per-install data.
 src/data/mongoose_contact_ids.json
+
+# Test mode switch (see src/services/test_mode.py) - per machine, holds a
+# personal email address. Never commit.
+data/test_mode.json

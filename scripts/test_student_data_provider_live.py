@@ -15,8 +15,8 @@ Deliberately does NOT print any real student PII beyond counts and a
 redacted sample - the exported CSV can carry the entire roster's names/
 emails/phones, unlike test_note_writer_live's single-student scope.
 
-Requires a saved session (run scripts/salesforce_login.py first if
-data/.salesforce_session.json doesn't exist or has expired).
+Opens a browser window to log in first (you complete password + MFA
+yourself); nothing is saved to disk.
 
     python scripts/test_student_data_provider_live.py
 """
@@ -29,7 +29,20 @@ from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SE
 from src.services.student_data_provider import PlaywrightStudentDataProvider
 
 
+def _log_in() -> None:
+    """Logs in through a visible browser window (you complete password + MFA
+    yourself); the session lives in memory only, for this run."""
+    from playwright.sync_api import sync_playwright
+    from src.services.salesforce_browser_session import log_in_interactively
+
+    print("Log in to Salesforce in the browser window that opens (including MFA)...")
+    with sync_playwright() as playwright:
+        log_in_interactively(playwright, CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR)
+    print("Logged in.")
+
+
 def main() -> None:
+    _log_in()
     provider = PlaywrightStudentDataProvider(
         report_url=CASELOAD_APP_URL,
         export_button_selector=EXPORT_BUTTON_SELECTOR,

@@ -27,6 +27,9 @@ from models.student import Student
 # no-ops the patch and lets the real (live, network-calling) code run instead.
 from src.services.student_data_provider import CachingStudentDataProvider, PlaywrightStudentDataProvider
 from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR
+from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
+from src.services.outlook_email_sender import OutlookEmailSender
+from src.services.test_mode import RedirectingEmailSender
 
 
 def test_handle_add_action_clicked_reads_nav_panel_group():
@@ -544,10 +547,11 @@ def test_student_data_provider_is_a_caching_playwright_provider(mock_ctk, mock_i
     assert real.export_button_selector == EXPORT_BUTTON_SELECTOR
 
 
+@patch.object(AppController, "_log_in_to_salesforce")  # never open a real login window
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch.object(PlaywrightStudentDataProvider, "get_students")
-def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock_ctk, mock_init_views):
+def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock_ctk, mock_init_views, mock_login):
     """_refresh_caseload_at_startup runs for real here (not patched out) -
     only the live Playwright call underneath it is faked, so this proves
     the eager-fetch-on-launch wiring actually populates the cache during
@@ -564,11 +568,12 @@ def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock
     mock_get_students.assert_called_once()
 
 
+@patch.object(AppController, "_log_in_to_salesforce")  # never open a real login window
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch.object(PlaywrightStudentDataProvider, "get_students", side_effect=RuntimeError("session expired"))
 def test_refresh_caseload_at_startup_failure_does_not_crash_app_construction(
-    mock_get_students, mock_ctk, mock_init_views
+    mock_get_students, mock_ctk, mock_init_views, mock_login
 ):
     """A failed fetch at startup (e.g. an expired session on first launch
     of the day) must be logged, not left to crash AppController() entirely -
@@ -582,6 +587,7 @@ def test_refresh_caseload_at_startup_failure_does_not_crash_app_construction(
 def test_handle_refresh_requested_shows_the_new_student_count_on_success():
     controller = AppController.__new__(AppController)
     controller.activity_logger = MagicMock()
+    controller._log_in_to_salesforce = MagicMock()  # never open a real login window
     fake_provider = MagicMock()
     fake_provider.refresh.return_value = [MagicMock(), MagicMock()]
     controller.student_data_provider = fake_provider
@@ -597,6 +603,7 @@ def test_handle_refresh_requested_shows_the_new_student_count_on_success():
 def test_handle_refresh_requested_shows_an_error_on_failure():
     controller = AppController.__new__(AppController)
     controller.activity_logger = MagicMock()
+    controller._log_in_to_salesforce = MagicMock()  # never open a real login window
     fake_provider = MagicMock()
     fake_provider.refresh.side_effect = RuntimeError("session expired")
     controller.student_data_provider = fake_provider
@@ -606,3 +613,95 @@ def test_handle_refresh_requested_shows_an_error_on_failure():
 
     mock_showerror.assert_called_once()
     assert "session expired" in mock_showerror.call_args[0][1]
+
+# --- Email sender / test mode wiring ----------------------------------------
+
+@patch.object(AppController, "_refresh_caseload_at_startup")
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+def test_without_test_mode_file_email_is_real_outlook_and_notes_are_real(mock_ctk, mock_init_views, mock_refresh, tmp_path):
+    with patch.object(AppController, "TEST_MODE_FILE", tmp_path / "test_mode.json"):  # doesn't exist
+        controller = AppController()
+
+    assert controller.test_mode is False
+    assert isinstance(controller.email_sender, OutlookEmailSender)
+    assert isinstance(controller.note_writer, PlaywrightNoteWriter)
+    assert controller.action_runner.email_sender is controller.email_sender
+
+
+@patch.object(AppController, "_refresh_caseload_at_startup")
+@patch.object(AppController, "_init_views")
+@patch("src.controllers.app_controller.ctk.CTk")
+def test_test_mode_file_redirects_email_and_fakes_notes(mock_ctk, mock_init_views, mock_refresh, tmp_path):
+    test_mode_file = tmp_path / "test_mode.json"
+    test_mode_file.write_text('{"redirect_email": "me@example.test"}', encoding="utf-8")
+    with patch.object(AppController, "TEST_MODE_FILE", test_mode_file):
+        controller = AppController()
+
+    assert controller.test_mode is True
+    assert isinstance(controller.email_sender, RedirectingEmailSender)
+    assert controller.email_sender.redirect_to == "me@example.test"
+    assert isinstance(controller.email_sender.inner, OutlookEmailSender)
+    assert isinstance(controller.note_writer, FakeNoteWriter)
+    assert controller.action_runner.email_sender is controller.email_sender
+    assert controller.action_runner.note_writer is controller.note_writer
+
+
+# --- Salesforce login (in memory, asked for every launch) -------------------
+
+from src.services import salesforce_browser_session as sbs
+
+
+@patch.object(sbs, "has_session", return_value=False)
+def test_loading_the_caseload_logs_in_first_when_nobody_has(mock_has_session):
+    controller = MagicMock()
+    controller.student_data_provider.refresh.return_value = ["s1"]
+    load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
+
+    assert load() == ["s1"]
+    controller._log_in_to_salesforce.assert_called_once()
+
+
+@patch.object(sbs, "has_session", return_value=True)
+def test_loading_the_caseload_skips_login_when_already_logged_in(mock_has_session):
+    controller = MagicMock()
+    controller.student_data_provider.refresh.return_value = ["s1"]
+    load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
+
+    load()
+    controller._log_in_to_salesforce.assert_not_called()
+
+
+@patch.object(sbs, "clear_session")
+@patch.object(sbs, "has_session", return_value=True)
+def test_expired_login_asks_to_log_in_again_then_retries_once(mock_has_session, mock_clear):
+    controller = MagicMock()
+    controller.student_data_provider.refresh.side_effect = [sbs.SessionExpiredError("expired"), ["s1"]]
+    load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
+
+    assert load() == ["s1"]
+    mock_clear.assert_called_once()
+    controller._log_in_to_salesforce.assert_called_once()
+
+
+def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
+    controller = MagicMock()
+    controller._startup_problem = None
+    controller._load_caseload_logging_in_if_needed.side_effect = RuntimeError("The Salesforce login window was closed before login finished.")
+    startup = AppController._refresh_caseload_at_startup.__get__(controller, AppController)
+
+    startup()  # must not raise - the app still opens
+
+    assert "login window was closed" in controller._startup_problem
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+def test_refresh_caseload_button_logs_in_if_needed(mock_showinfo):
+    controller = MagicMock()
+    controller._load_caseload_logging_in_if_needed.return_value = ["s1", "s2"]
+    refresh = AppController.handle_refresh_requested.__get__(controller, AppController)
+
+    refresh()
+
+    controller._load_caseload_logging_in_if_needed.assert_called_once()
+    assert "2 students" in mock_showinfo.call_args[0][1]

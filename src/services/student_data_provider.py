@@ -17,23 +17,20 @@ from abc import ABC, abstractmethod
 from dataclasses import fields
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlparse
 
 from src.models.student import Student
 from src.services.csv_student_import import parse_students_csv
-from src.services.salesforce_browser_session import open_authenticated_context
+from src.services.salesforce_browser_session import (
+    EXPIRED_MESSAGE,
+    SessionExpiredError,
+    open_authenticated_context,
+)
+# Kept under its old name here - the pure, unit-tested redirect check now
+# lives in salesforce_browser_session (shared with PlaywrightNoteWriter).
+from src.services.salesforce_browser_session import looks_like_a_different_host as _looks_like_a_different_host
 from src.services.task_utils import get_latest_task_number
 
 _STUDENT_FIELD_NAMES = {f.name for f in fields(Student)}
-
-
-def _looks_like_a_different_host(original_url: str, landed_url: str) -> bool:
-    """True if navigating to `original_url` actually landed somewhere with a
-    different host - the signature of a saved-but-expired session getting
-    redirected to an SSO login page instead of the target Salesforce app.
-    A pure function on purpose so this can be unit-tested without a real
-    browser (see test_student_data_provider.py)."""
-    return urlparse(landed_url).netloc != urlparse(original_url).netloc
 
 
 class StudentDataProvider(ABC):
@@ -101,8 +98,8 @@ class CsvStudentDataProvider(StudentDataProvider):
 
 class PlaywrightStudentDataProvider(StudentDataProvider):
     """Reads the roster by driving a real, already-authenticated browser
-    (see salesforce_browser_session.py - requires a session saved via
-    scripts/salesforce_login.py first) to a report/export page and
+    (see salesforce_browser_session.py - requires logging in first, which
+    the app does at startup / on "Refresh Caseload") to a report/export page and
     downloading its CSV, then parsing it exactly like
     CsvStudentDataProvider does. The browser-automation step is the only
     difference from the CSV hedge - it replaces a manual export with an
@@ -134,20 +131,12 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
                 page = context.new_page()
                 page.goto(self.report_url)
 
-                # A saved-but-expired session gets redirected to WGU's SSO
-                # login instead of the report page - left unchecked, the
-                # click below just times out after 30s with a bare
-                # Playwright TimeoutError, which is exactly what happened
-                # live once already (see src/CLAUDE.md) and gives no hint
-                # what actually went wrong. Catch it here with a clear,
-                # actionable message instead.
+                # An expired login gets redirected to WGU's SSO sign-in page
+                # instead of the report page - left unchecked, the click
+                # below just times out after 30s with a bare Playwright
+                # error (this happened live once, see src/CLAUDE.md).
                 if _looks_like_a_different_host(self.report_url, page.url):
-                    raise RuntimeError(
-                        f"Expected to land on {self.report_url!r} but got redirected to "
-                        f"{page.url!r} instead - the saved Salesforce session has "
-                        f"likely expired. Run scripts/salesforce_login.py to log in "
-                        f"again, then retry."
-                    )
+                    raise SessionExpiredError(EXPIRED_MESSAGE)
 
                 with page.expect_download() as download_info:
                     page.click(self.export_button_selector)

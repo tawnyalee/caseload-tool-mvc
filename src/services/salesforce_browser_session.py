@@ -4,69 +4,97 @@ API access isn't available (see src/CLAUDE.md - other developers doing
 similar integration work at this org hit the same wall and had to fall
 back to browser automation).
 
-MFA can't be completed by an automated script - there's no way for code
-running unattended to receive a push notification or read a code off the
-developer's phone. So this is deliberately semi-interactive:
-scripts/salesforce_login.py opens a real, visible browser window once,
-the developer logs in themselves (MFA included), and the resulting
-session (cookies/local storage) is saved to STORAGE_STATE_PATH. Anything
-that needs an authenticated Salesforce session afterward
-(PlaywrightStudentDataProvider, a future note-writing adapter) loads that
-saved state instead of logging in again, until the session expires - at
-which point scripts/salesforce_login.py needs to be re-run.
+MFA can't be completed by code - there's no way for it to receive a push
+notification or read a code off the professor's phone. So login is
+deliberately interactive: log_in_interactively() opens a real, visible
+browser window at the Caseload page, the professor logs in themselves
+(password + MFA - the app never sees or handles either), and once the
+Caseload page has actually loaded, the resulting session (cookies) is
+kept IN MEMORY for the rest of this app session. Everything that needs an
+authenticated Salesforce page afterward (PlaywrightStudentDataProvider,
+PlaywrightNoteWriter) opens its own hidden browser loaded with it.
 
-STORAGE_STATE_PATH's contents are as sensitive as a password - whoever
-holds the file can act as the logged-in session. Never commit it, never
-log its contents; .gitignore already excludes it.
+Nothing is ever written to disk (developer's explicit call, 2026-10-22):
+when the app closes, the session is gone, and the next launch asks to log
+in again. An earlier version saved the session to a file for reuse across
+launches; that file was as good as being logged in for anyone who copied
+it, and it also meant a fresh app launch never asked to log in.
 """
-from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 
-from playwright.sync_api import BrowserContext, Playwright
+from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-STORAGE_STATE_PATH = REPO_ROOT / "data" / ".salesforce_session.json"
+LOGIN_TIMEOUT_MS = 5 * 60 * 1000
+
+NOT_LOGGED_IN_MESSAGE = 'Not logged in to Salesforce. Click "Refresh Caseload" to log in.'
+EXPIRED_MESSAGE = 'Your Salesforce login has expired. Click "Refresh Caseload" to log in again.'
+
+# Playwright storage_state as a dict - cookies for this app session only.
+_session_state: Optional[dict] = None
 
 
-def has_saved_session() -> bool:
-    return STORAGE_STATE_PATH.exists()
+class NotLoggedInError(RuntimeError):
+    pass
 
 
-def save_session_interactively(playwright: Playwright, login_url: str) -> None:
-    """Opens a real, visible browser at `login_url`, waits for the
-    developer to log in manually (including MFA), then saves the
-    resulting session to STORAGE_STATE_PATH.
+class SessionExpiredError(RuntimeError):
+    pass
 
-    "Logged in" is confirmed by the developer themselves (pressing Enter
-    in the terminal) rather than guessed from the URL - the org's actual
-    SSO/MFA redirect chain isn't known in advance, and an intermediate
-    redirect hop briefly matching "looks logged in" caused the session to
-    be saved before login had actually happened.
-    """
-    browser = playwright.chromium.launch(headless=False)
-    context = browser.new_context()
-    page = context.new_page()
-    page.goto(login_url)
 
-    print("Log in (including MFA) in the browser window that just opened.")
-    input("Once you're fully logged in and see your normal Salesforce/Learner360 view, press Enter here...")
+def has_session() -> bool:
+    return _session_state is not None
 
-    STORAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    context.storage_state(path=str(STORAGE_STATE_PATH))
-    browser.close()
 
-    print(f"Session saved to {STORAGE_STATE_PATH}")
+def clear_session() -> None:
+    global _session_state
+    _session_state = None
+
+
+def set_session_state(state: Optional[dict]) -> None:
+    """Mainly for tests - normal code logs in via log_in_interactively()."""
+    global _session_state
+    _session_state = state
+
+
+def looks_like_a_different_host(original_url: str, landed_url: str) -> bool:
+    """True when navigating to `original_url` ended up on a different host -
+    an expired/missing login gets redirected to WGU's SSO sign-in page."""
+    return urlparse(landed_url).netloc != urlparse(original_url).netloc
+
+
+def log_in_interactively(
+    playwright: Playwright, target_url: str, logged_in_selector: str, headless: bool = False,
+) -> None:
+    """Opens a visible browser at `target_url` and waits (up to 5 minutes)
+    for the professor to log in. "Logged in" means `logged_in_selector` -
+    an element that only exists on the real, authenticated target page
+    (the Caseload page's Download button) - has appeared, so a redirect hop
+    partway through SSO/MFA can't be mistaken for success. Raises
+    RuntimeError if the window is closed first or time runs out.
+    `headless` exists only so tests don't pop up a window."""
+    global _session_state
+    browser = playwright.chromium.launch(headless=headless)
+    try:
+        page = browser.new_context().new_page()
+        page.goto(target_url)
+        page.wait_for_selector(logged_in_selector, state="visible", timeout=LOGIN_TIMEOUT_MS)
+        _session_state = page.context.storage_state()  # a dict, kept in memory only
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Salesforce login wasn't finished within 5 minutes.") from None
+    except PlaywrightError:
+        raise RuntimeError("The Salesforce login window was closed before login finished.") from None
+    finally:
+        try:
+            browser.close()
+        except PlaywrightError:
+            pass  # already closed by the professor
 
 
 def open_authenticated_context(playwright: Playwright, headless: bool = True) -> BrowserContext:
-    """Returns a browser context pre-loaded with the saved session, for
-    anything that needs to navigate authenticated Salesforce pages
-    without logging in again. Raises RuntimeError if no session has been
-    saved yet - callers should catch this and tell the user to run
-    scripts/salesforce_login.py first."""
-    if not has_saved_session():
-        raise RuntimeError(
-            f"No saved Salesforce session at {STORAGE_STATE_PATH}. "
-            f"Run scripts/salesforce_login.py first to log in interactively."
-        )
+    """A new browser context loaded with this app session's login. Raises
+    NotLoggedInError if nobody has logged in yet."""
+    if _session_state is None:
+        raise NotLoggedInError(NOT_LOGGED_IN_MESSAGE)
     browser = playwright.chromium.launch(headless=headless)
-    return browser.new_context(storage_state=str(STORAGE_STATE_PATH))
+    return browser.new_context(storage_state=_session_state)

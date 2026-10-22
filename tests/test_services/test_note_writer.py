@@ -51,8 +51,7 @@ def test_fake_note_writer_follow_up_note_overwrites_previous_value():
 
 @pytest.fixture
 def saved_session(tmp_path, monkeypatch):
-    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
-    sbs.STORAGE_STATE_PATH.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+    monkeypatch.setattr(sbs, "_session_state", {"cookies": [], "origins": []})  # logged in, in memory
 
 
 @pytest.fixture
@@ -96,8 +95,8 @@ def test_update_follow_up_note_navigates_and_invokes_the_callback(saved_session,
     assert calls == [("SF2", "Sent welcome email")]
 
 
-def test_playwright_note_writer_raises_a_clear_error_when_no_session_saved(tmp_path, monkeypatch):
-    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
+def test_playwright_note_writer_raises_a_clear_error_when_not_logged_in(tmp_path, monkeypatch):
+    monkeypatch.setattr(sbs, "_session_state", None)  # nobody has logged in
 
     writer = PlaywrightNoteWriter(
         student_record_url_template="file:///does-not-matter.html?id={salesforce_id}",
@@ -105,5 +104,5 @@ def test_playwright_note_writer_raises_a_clear_error_when_no_session_saved(tmp_p
         update_follow_up_fn=lambda page, sid, text: None,
     )
 
-    with pytest.raises(RuntimeError, match="salesforce_login.py"):
+    with pytest.raises(RuntimeError, match="Not logged in to Salesforce"):
         writer.write_note("SF1", "Subject", "Body")

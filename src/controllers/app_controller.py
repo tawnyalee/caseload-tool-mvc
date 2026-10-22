@@ -16,9 +16,11 @@ from src.services.student_data_provider import (
     FakeStudentDataProvider,
     PlaywrightStudentDataProvider,
 )
-from src.services.email_sender import FakeEmailSender
+from src.services.outlook_email_sender import OutlookEmailSender
+from src.services.test_mode import DEFAULT_TEST_MODE_FILE, RedirectingEmailSender, load_redirect_email
 from src.services.text_sender import FakeTextSender
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
+from src.services import salesforce_browser_session
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, SCREENSHOTS_DIR, update_follow_up_fn, write_note_fn,
 )
@@ -62,6 +64,7 @@ class AppController:
     # to this file rather than the current working directory, so startup
     # cleanup always targets the same folder the logger writes to.
     LOG_DIR = SCREENSHOTS_DIR.parent
+    TEST_MODE_FILE = DEFAULT_TEST_MODE_FILE
 
     # region Initialization
     def __init__(self) -> None:
@@ -99,22 +102,36 @@ class AppController:
                 export_button_selector=EXPORT_BUTTON_SELECTOR,
             )
         )
-        self.email_sender = FakeEmailSender()
+        # Test mode (data/test_mode.json, see test_mode.py): every email goes
+        # to one test address and notes skip Salesforce, so the real app can
+        # be tried against the real roster without contacting any student.
+        self.test_mode_redirect = load_redirect_email(self.TEST_MODE_FILE)
+        self.test_mode = self.test_mode_redirect is not None
+
+        # Real Outlook (Classic) sending - Outlook is only contacted on the
+        # first send, so construction is safe even if it isn't set up.
+        self.email_sender = OutlookEmailSender()
+        if self.test_mode:
+            self.email_sender = RedirectingEmailSender(self.email_sender, self.test_mode_redirect)
         self.text_sender = FakeTextSender()
 
-        # The one real (non-fake) adapter so far - confirmed working
-        # end-to-end against production Salesforce (see src/CLAUDE.md's
-        # Salesforce integration plan). Construction itself never fails even
-        # without a saved session; write_note()/update_follow_up_note() raise
-        # a clear "run scripts/salesforce_login.py first" RuntimeError at call
-        # time instead, which ActionRunner already catches and logs per
-        # student like any other failure - so this is safe to wire in
-        # unconditionally, logged-in or not.
+        # Confirmed working end-to-end against production Salesforce (see
+        # src/CLAUDE.md's Salesforce integration plan). Construction never
+        # fails even when not logged in; write_note()/update_follow_up_note()
+        # raise a clear "not logged in" / "login expired" error at call time
+        # instead, which ActionRunner already catches and logs per student
+        # like any other failure - so this is safe to wire in unconditionally.
         self.note_writer = PlaywrightNoteWriter(
             student_record_url_template=CASELOAD_APP_URL,
             write_note_fn=write_note_fn,
             update_follow_up_fn=update_follow_up_fn,
         )
+        if self.test_mode:
+            self.note_writer = FakeNoteWriter()
+            self.activity_logger.log(
+                f"TEST MODE ON - all email goes to {self.test_mode_redirect or '(no valid address - sends will fail)'}; "
+                f"notes are not written to Salesforce. Delete data/test_mode.json to go live."
+            )
 
         # Real, not fake — this just lists files under the local Outlook
         # signatures folder, so it works today without a full Outlook adapter.
@@ -137,8 +154,15 @@ class AppController:
         # Keeps track of whatever active view is showing on the right
         self.current_workspace_view: Optional[ctk.CTkFrame] = None
 
+        # Set by _refresh_caseload_at_startup if login/loading failed, and
+        # shown as a popup once the window exists (it doesn't yet, at that
+        # point - which is why it used to go only to the log file).
+        self._startup_problem: Optional[str] = None
+
         self._load_data()
         self._init_views()
+        if self._startup_problem:
+            self.root.after(300, lambda: messagebox.showwarning("Salesforce", self._startup_problem))
     # endregion
 
     def _reload_scenarios_dict(self) -> None:
@@ -173,26 +197,66 @@ class AppController:
     # endregion
 
     def _refresh_caseload_at_startup(self) -> None:
-        """Eager fetch on every launch (the developer's explicit choice over
-        a lazy first-use fetch) - the roster changes throughout the day at
-        the source, so a stale cache surviving between sessions isn't
-        acceptable. This blocks startup for the live Salesforce round trip
-        (~20s+); a failure here (e.g. an expired session on first launch of
-        the day) is logged rather than crashing startup - the cache just
-        stays empty until a working "Refresh Caseload" click.
+        """Every launch: open the Salesforce login window, then load the
+        roster (the developer's explicit choice over a lazy first-use fetch
+        - the roster changes throughout the day at the source). Nothing is
+        remembered between launches, so this always asks to log in. A failure
+        (window closed, login not finished) is logged and shown as a popup
+        once the window is up, never a crash - the app still opens, and
+        "Refresh Caseload" is the retry path.
 
         A separate method (not inlined in _load_data) specifically so tests
         that construct a real AppController can patch this out the same way
-        they already patch _init_views, instead of every such test
-        triggering a real, slow, session-dependent Salesforce round trip."""
+        they already patch _init_views, instead of every such test opening a
+        real login window."""
         try:
-            students = self.student_data_provider.refresh()
+            students = self._load_caseload_logging_in_if_needed()
             self.activity_logger.log(f"Caseload loaded at startup: {len(students)} students")
         except Exception as exc:
-            self.activity_logger.log(f"[CASELOAD FETCH FAILED AT STARTUP] {exc}")
+            self.activity_logger.log(f"[CASELOAD NOT LOADED AT STARTUP] {exc}")
+            self._startup_problem = f"The caseload couldn't be loaded:\n\n{exc}"
+
+    def _log_in_to_salesforce(self) -> None:
+        """Opens the visible login window and waits for the professor to log
+        in themselves. The session is kept in memory only (see
+        salesforce_browser_session.py)."""
+        from playwright.sync_api import sync_playwright
+
+        self.activity_logger.log("Opening the Salesforce login window...")
+        with sync_playwright() as playwright:
+            salesforce_browser_session.log_in_interactively(
+                playwright, target_url=CASELOAD_APP_URL, logged_in_selector=EXPORT_BUTTON_SELECTOR,
+            )
+        self.activity_logger.log("Logged in to Salesforce")
+
+    def _load_caseload_logging_in_if_needed(self):
+        """Refreshes the roster, opening the login window first if nobody has
+        logged in yet this app session, or again if the login has expired."""
+        if not salesforce_browser_session.has_session():
+            self._log_in_to_salesforce()
+        try:
+            return self.student_data_provider.refresh()
+        except salesforce_browser_session.SessionExpiredError:
+            self.activity_logger.log("Salesforce login expired - asking to log in again")
+            salesforce_browser_session.clear_session()
+            self._log_in_to_salesforce()
+            return self.student_data_provider.refresh()
 
     # region View Management
     def _init_views(self) -> None:
+        # Packed first with side="top" so it spans the whole window above
+        # both panels - impossible to miss while test mode is on.
+        if self.test_mode:
+            self.root.title("Caseload Management Tool — TEST MODE")
+            target = self.test_mode_redirect or "NO VALID ADDRESS (sends will fail)"
+            ctk.CTkLabel(
+                self.root,
+                text=f"🧪 TEST MODE — all email goes to {target}, notes are NOT written to Salesforce. "
+                     f"Delete data/test_mode.json to go live.",
+                fg_color="#e0b400", text_color="black", corner_radius=0,
+                font=ctk.CTkFont(weight="bold"), height=32,
+            ).pack(side="top", fill="x")
+
         # Left Side: Navigation Panel
         self.nav_panel = ScenarioNavPanel(
             master=self.root, 
@@ -1003,7 +1067,7 @@ class AppController:
     def handle_refresh_requested(self) -> None:
         self.activity_logger.log("Refresh Caseload clicked")
         try:
-            students = self.student_data_provider.refresh()
+            students = self._load_caseload_logging_in_if_needed()
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
             messagebox.showinfo(
                 "Refresh Caseload",

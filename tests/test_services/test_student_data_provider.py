@@ -163,8 +163,7 @@ function downloadCsv() {{
 
 
 def test_playwright_provider_downloads_and_parses_the_exported_csv(tmp_path, monkeypatch):
-    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
-    sbs.STORAGE_STATE_PATH.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+    monkeypatch.setattr(sbs, "_session_state", {"cookies": [], "origins": []})  # logged in, in memory
 
     csv_content = "StudentID,StudentEmail,Name,CourseCode\nSF1,jane@example.test,Jane Doe,D424\n"
     html_path = tmp_path / "report.html"
@@ -185,14 +184,14 @@ def test_playwright_provider_downloads_and_parses_the_exported_csv(tmp_path, mon
     assert students[0].full_name == "Jane Doe"
 
 
-def test_playwright_provider_raises_a_clear_error_when_no_session_saved(tmp_path, monkeypatch):
-    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
+def test_playwright_provider_raises_a_clear_error_when_not_logged_in(tmp_path, monkeypatch):
+    monkeypatch.setattr(sbs, "_session_state", None)  # nobody has logged in
 
     provider = PlaywrightStudentDataProvider(
         report_url="file:///does-not-matter.html", export_button_selector="#export-btn",
     )
 
-    with pytest.raises(RuntimeError, match="salesforce_login.py"):
+    with pytest.raises(RuntimeError, match="Not logged in to Salesforce"):
         provider.get_students()
 
 
@@ -200,8 +199,7 @@ def test_playwright_provider_cleans_up_the_downloaded_csvs_temp_dir(tmp_path, mo
     """The downloaded roster CSV is real student PII - per the developer's
     explicit FERPA constraint, its temp directory must not linger on disk
     after parsing, success or failure."""
-    monkeypatch.setattr(sbs, "STORAGE_STATE_PATH", tmp_path / "session.json")
-    sbs.STORAGE_STATE_PATH.write_text(json.dumps({"cookies": [], "origins": []}), encoding="utf-8")
+    monkeypatch.setattr(sbs, "_session_state", {"cookies": [], "origins": []})  # logged in, in memory
 
     csv_content = "StudentID,StudentEmail,Name,CourseCode\nSF1,jane@example.test,Jane Doe,D424\n"
     html_path = tmp_path / "report.html"

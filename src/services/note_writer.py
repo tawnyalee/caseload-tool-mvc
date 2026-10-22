@@ -8,7 +8,12 @@ integration plan).
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, List, Optional, Set
 
-from src.services.salesforce_browser_session import open_authenticated_context
+from src.services.salesforce_browser_session import (
+    EXPIRED_MESSAGE,
+    SessionExpiredError,
+    looks_like_a_different_host,
+    open_authenticated_context,
+)
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -53,7 +58,7 @@ class FakeNoteWriter(NoteWriter):
 class PlaywrightNoteWriter(NoteWriter):
     """Writes notes and updates the follow-up-note field by driving a
     real, already-authenticated browser (see salesforce_browser_session.py
-    - requires a session saved via scripts/salesforce_login.py first) to
+    - requires logging in first, which the app does at startup) to
     a student's record page and simulating the same clicks/typing a
     person would do - confirmed there's no faster path for this org
     (see src/CLAUDE.md's integration plan).
@@ -103,7 +108,10 @@ class PlaywrightNoteWriter(NoteWriter):
             context = open_authenticated_context(playwright, headless=self.headless)
             try:
                 page = context.new_page()
-                page.goto(self.student_record_url_template.format(salesforce_id=salesforce_id))
+                url = self.student_record_url_template.format(salesforce_id=salesforce_id)
+                page.goto(url)
+                if looks_like_a_different_host(url, page.url):
+                    raise SessionExpiredError(EXPIRED_MESSAGE)
                 action(page)
             finally:
                 context.browser.close()
