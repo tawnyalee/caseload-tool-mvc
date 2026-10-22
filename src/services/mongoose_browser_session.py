@@ -20,6 +20,8 @@ from typing import Optional
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
+from src.services.browser_launch import launch_browser
+
 MONGOOSE_URL = "https://sms.mongooseresearch.com"
 LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -56,7 +58,7 @@ def log_in_interactively(
     Raises RuntimeError if the window is closed first or time runs out.
     `headless` exists only so tests don't pop up a window."""
     global _session_state
-    browser = playwright.chromium.launch(headless=headless)
+    browser = launch_browser(playwright, headless=headless)
     try:
         page = browser.new_context().new_page()
         page.goto(target_url)
@@ -78,5 +80,5 @@ def open_authenticated_context(playwright: Playwright, headless: bool = True) ->
     Raises NotLoggedInError if nobody has logged in yet."""
     if _session_state is None:
         raise NotLoggedInError(NOT_LOGGED_IN_MESSAGE)
-    browser = playwright.chromium.launch(headless=headless)
+    browser = launch_browser(playwright, headless=headless)
     return browser.new_context(storage_state=_session_state)
