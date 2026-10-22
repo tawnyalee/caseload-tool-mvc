@@ -21,8 +21,9 @@ single student's failure is isolated within run(). send_ad_hoc_email()
 sends a one-off, non-template email to every student (e.g. a class
 cancellation notice).
 """
+import threading
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from src.models.action import Action
 from src.models.group import Group
@@ -36,6 +37,35 @@ from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
 from src.services.text_sender import TextSender
+
+
+class RunControl:
+    """Lets the app follow a run from another thread and stop it. The runner
+    calls report() before each student and checks stop_requested between
+    students - a stop finishes the current student, then marks everyone
+    left as not started (so the results window shows exactly who wasn't
+    done). Thread-safe: request_stop() is called from the UI thread while
+    the run happens on the background worker."""
+
+    def __init__(self, on_progress: Optional[Callable[[int, int, str], None]] = None):
+        self.on_progress = on_progress
+        self.context = ""  # e.g. "D424 — Welcome Action (2 of 3)", set by batch-style runs
+        self._stop = threading.Event()
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop.is_set()
+
+    def report(self, position: int, total: int, student_name: str) -> None:
+        if self.on_progress:
+            prefix = f"{self.context}: " if self.context else ""
+            self.on_progress(position, total, f"{prefix}{student_name}")
+
+
+STOPPED_DETAIL = "Run was stopped before this student"
 
 
 @dataclass
@@ -129,8 +159,10 @@ class ActionRunner:
         included_student_ids: Optional[Set[str]] = None,
         email_subject_override: Optional[str] = None,
         email_body_override: Optional[str] = None,
+        control: Optional[RunControl] = None,
     ) -> ActionRunSummary:
-        """`included_student_ids`, when given, further restricts the
+        """`control`, when given, receives progress and can stop the run
+        between students (see RunControl). `included_student_ids`, when given, further restricts the
         filter-matched students to just those IDs - how the pre-send review
         dialog's checkbox deselection actually takes effect. None (the
         default) means every filter-matched student runs, same as before
@@ -162,7 +194,11 @@ class ActionRunner:
             )
         summary = ActionRunSummary()
 
-        for student in students:
+        for position, student in enumerate(students, start=1):
+            if self._stopped(control, students[position - 1:], summary):
+                break
+            if control:
+                control.report(position, len(students), student.full_name)
             self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
             email_ok = False
 
@@ -202,6 +238,7 @@ class ActionRunner:
         groups: List[Group],
         actions_by_id: Dict[str, Action],
         included_ids_by_group_id: Optional[Dict[str, Set[str]]] = None,
+        control: Optional[RunControl] = None,
     ) -> ActionRunSummary:
         """Runs every group's designated welcome action (Group.welcome_action_id)
         and aggregates all of them into a single combined summary.
@@ -223,7 +260,9 @@ class ActionRunner:
                 continue
 
             included_ids = included_ids_by_group_id.get(group.id) if included_ids_by_group_id else None
-            group_summary = self.run(action, group_name=group.name, included_student_ids=included_ids)
+            if control:
+                control.context = f"{group.name} — {action.name}"
+            group_summary = self.run(action, group_name=group.name, included_student_ids=included_ids, control=control)
             combined.results.extend(group_summary.results)
 
         self.activity_logger.log(
@@ -236,6 +275,7 @@ class ActionRunner:
         self,
         items: List[Tuple[Action, str]],
         included_ids_by_index: Optional[Dict[int, Set[str]]] = None,
+        control: Optional[RunControl] = None,
     ) -> BatchRunSummary:
         """Runs each (action, group_name) pair in `items`, in the order
         given, one action's failure isolated from the rest — same
@@ -252,8 +292,10 @@ class ActionRunner:
 
         for i, (action, group_name) in enumerate(items):
             included_ids = included_ids_by_index.get(i) if included_ids_by_index else None
+            if control:
+                control.context = f"{group_name} — {action.name} ({i + 1} of {len(items)})"
             try:
-                summary = self.run(action, group_name=group_name, included_student_ids=included_ids)
+                summary = self.run(action, group_name=group_name, included_student_ids=included_ids, control=control)
                 batch_summary.items.append(
                     BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
                 )
@@ -284,6 +326,7 @@ class ActionRunner:
         note_body: str = "",
         follow_up_note: str = "",
         included_student_ids: Optional[Set[str]] = None,
+        control: Optional[RunControl] = None,
     ) -> ActionRunSummary:
         """Sends a one-off email (not tied to any saved Action or template) to
         every student from the provider — e.g. a class cancellation notice.
@@ -300,7 +343,11 @@ class ActionRunner:
         has_note_content = bool(note_subject or note_body or follow_up_note)
         summary = ActionRunSummary()
 
-        for student in students:
+        for position, student in enumerate(students, start=1):
+            if self._stopped(control, students[position - 1:], summary):
+                break
+            if control:
+                control.report(position, len(students), student.full_name)
             self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
             result = self._send_email(student, subject, body, signature)
             summary.results.append(result)
@@ -322,6 +369,19 @@ class ActionRunner:
             f"{summary.failed} failed, {summary.skipped} skipped"
         )
         return summary
+
+    def _stopped(self, control: Optional[RunControl], remaining: List[Student], summary: ActionRunSummary) -> bool:
+        """If a stop was requested, marks every remaining student as not
+        started (one skipped result each, so the results window lists them)
+        and returns True."""
+        if not control or not control.stop_requested:
+            return False
+        self.activity_logger.log(f"[STOPPED] Run stopped by the user - {len(remaining)} student(s) not started")
+        for student in remaining:
+            summary.results.append(
+                StepResult(student=student, step_type="stopped", outcome="skipped", detail=STOPPED_DETAIL)
+            )
+        return True
 
     def _attempt_email(
         self,

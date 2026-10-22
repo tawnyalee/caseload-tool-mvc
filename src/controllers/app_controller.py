@@ -25,12 +25,14 @@ from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, SCREENSHOTS_DIR, update_follow_up_fn, write_note_fn,
 )
 from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
-from src.services.action_runner import ActionRunner
+from src.services.action_runner import ActionRunner, RunControl
+from src.services.background_worker import BackgroundWorker, UiDispatcher
 from src.views.dashboard_view import DashboardView
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
 from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
 from src.views.run_summary_modal import RunSummaryModal
+from src.views.run_progress_modal import RunProgressModal
 from src.services.run_report import batch_issue_lines, issue_lines
 
 
@@ -69,6 +71,14 @@ class AppController:
     # region Initialization
     def __init__(self) -> None:
         self.root: ctk.CTk = ctk.CTk()
+
+        # Sends, notes and caseload loads run on one background thread so
+        # the window keeps responding (see background_worker.py). Only one
+        # job at a time: _active_run is set while one is going.
+        self.ui = UiDispatcher(self.root)
+        self.worker = BackgroundWorker(dispatch=self.ui.call_soon)
+        self._active_run: Optional[RunControl] = None
+        self._progress_window: Optional[RunProgressModal] = None
         self.root.title("Caseload Management Tool")
         self.root.geometry("1100x650")
 
@@ -267,7 +277,10 @@ class AppController:
             width=350
         )
         self.nav_panel.pack(side="left", fill="y", padx=(10, 5), pady=10)
-        self.activity_logger.ui_callback = self.nav_panel.write_log_message
+        # Through the dispatcher: log lines also come from the background
+        # worker during a run, and Tk widgets may only be touched from the
+        # UI thread.
+        self.activity_logger.ui_callback = lambda message: self.ui.call_soon(self.nav_panel.write_log_message, message)
 
         # Right Side: The permanent Canvas Frame
         self.right_workspace = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -388,6 +401,8 @@ class AppController:
         self.switch_workspace_view(DashboardView, controller=self)
 
     def handle_send_welcome_emails(self) -> None:
+        if self._is_busy_and_told_user():
+            return
         actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
         eligible_groups = [g for g in self.groups if g.welcome_action_id and g.welcome_action_id in actions_by_id]
         review_items = [
@@ -399,10 +414,15 @@ class AppController:
         ]
 
         def _on_confirm(selections):
-            summary = self.action_runner.run_welcome_emails(
-                self.groups, actions_by_id, included_ids_by_group_id=selections,
+            self._run_in_background(
+                "Sending Welcome Emails",
+                lambda control: self.action_runner.run_welcome_emails(
+                    self.groups, actions_by_id, included_ids_by_group_id=selections, control=control,
+                ),
+                on_finished=_show_results,
             )
 
+        def _show_results(summary):
             message = (
                 f"Welcome emails complete:\n\n"
                 f"✅ Succeeded: {summary.succeeded}\n"
@@ -435,15 +455,22 @@ class AppController:
         modal - the email and note fields live on the dashboard itself).
         Opens the pre-send review dialog first; the actual send only
         happens if the professor confirms it there."""
+        if self._is_busy_and_told_user():
+            return
         students = self.action_runner.student_provider.get_students()
 
         def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
-            summary = self.action_runner.send_ad_hoc_email(
-                reviewed_subject, reviewed_body, signature,
-                note_subject=note_subject, note_body=note_body, follow_up_note=follow_up_note,
-                included_student_ids=selected_ids,
+            self._run_in_background(
+                "Sending Email",
+                lambda control: self.action_runner.send_ad_hoc_email(
+                    reviewed_subject, reviewed_body, signature,
+                    note_subject=note_subject, note_body=note_body, follow_up_note=follow_up_note,
+                    included_student_ids=selected_ids, control=control,
+                ),
+                on_finished=_show_results,
             )
 
+        def _show_results(summary):
             message = (
                 f"Ad-hoc email complete:\n\n"
                 f"✅ Succeeded: {summary.succeeded}\n"
@@ -467,6 +494,8 @@ class AppController:
         )
 
     def handle_open_batch_runner(self) -> None:
+        if self._is_busy_and_told_user():
+            return
         main_win = self.right_workspace.winfo_toplevel()
         actions = self.action_repo.load_actions()
         BatchRunModal(
@@ -486,6 +515,8 @@ class AppController:
         self.saved_batch_repo.delete_batch(batch_id)
 
     def _handle_run_batch(self, actions, group_names) -> None:
+        if self._is_busy_and_told_user():
+            return
         items = list(zip(actions, group_names))
         review_items = [
             MultiReviewItem(
@@ -497,8 +528,15 @@ class AppController:
 
         def _on_confirm(selections):
             included_ids_by_index = {int(key): ids for key, ids in selections.items()}
-            batch_summary = self.action_runner.run_batch(items, included_ids_by_index=included_ids_by_index)
+            self._run_in_background(
+                "Running Batch",
+                lambda control: self.action_runner.run_batch(
+                    items, included_ids_by_index=included_ids_by_index, control=control,
+                ),
+                on_finished=_show_results,
+            )
 
+        def _show_results(batch_summary):
             lines = []
             for item in batch_summary.items:
                 if item.error:
@@ -540,6 +578,8 @@ class AppController:
         )
 
     def handle_run_action(self, action_name: str) -> None:
+        if self._is_busy_and_told_user():
+            return
         action = self.scenarios_raw.get(action_name)
         if action is None or not hasattr(action, "id"):
             messagebox.showerror("Error", f"Could not find action '{action_name}' to run.")
@@ -556,12 +596,18 @@ class AppController:
             template_body = template.body if template else ""
 
         def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
-            summary = self.action_runner.run(
-                action, group_name=active_group, included_student_ids=selected_ids,
-                email_subject_override=reviewed_subject if action.is_email else None,
-                email_body_override=reviewed_body if action.is_email else None,
+            self._run_in_background(
+                f"Running '{action_name}'",
+                lambda control: self.action_runner.run(
+                    action, group_name=active_group, included_student_ids=selected_ids,
+                    email_subject_override=reviewed_subject if action.is_email else None,
+                    email_body_override=reviewed_body if action.is_email else None,
+                    control=control,
+                ),
+                on_finished=_show_results,
             )
 
+        def _show_results(summary):
             message = (
                 f"Run complete for '{action_name}':\n\n"
                 f"✅ Succeeded: {summary.succeeded}\n"
@@ -1059,25 +1105,36 @@ class AppController:
             messagebox.showinfo("Success", f"Action '{target_name}' was successfully deleted.")
 
     def handle_stop_requested(self) -> None:
-        """Emergency break: Alerts and halts active processes."""
-        self.activity_logger.log("⛔ EMERGENCY STOP REQUESTED!")
-        messagebox.showerror(
-            "Emergency Stop",
-            "⛔ Process Stopped!\n\nAll running automation streams have been immediately halted."
-        )
+        """The nav panel's ⛔ STOP button - same as the progress window's
+        Stop: finish the current student, then stop."""
+        if self._active_run is None:
+            messagebox.showinfo("Stop", "Nothing is running right now.")
+            return
+        self.activity_logger.log("⛔ Stop requested - finishing the current student, then stopping")
+        if self._progress_window is not None:
+            self._progress_window.request_stop()  # also calls the run's request_stop
+        else:
+            self._active_run.request_stop()
 
     def handle_refresh_requested(self) -> None:
+        if self._is_busy_and_told_user():
+            return
         self.activity_logger.log("Refresh Caseload clicked")
-        try:
-            students = self._load_caseload_logging_in_if_needed()
+
+        def _done(students):
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
-            messagebox.showinfo(
-                "Refresh Caseload",
-                f"↻ Caseload refreshed — {len(students)} students loaded."
-            )
-        except Exception as exc:
+            messagebox.showinfo("Refresh Caseload", f"↻ Caseload refreshed — {len(students)} students loaded.")
+
+        def _failed(exc):
             self.activity_logger.log(f"[REFRESH FAILED] {exc}")
             messagebox.showerror("Refresh Failed", f"Couldn't refresh the caseload:\n\n{exc}")
+
+        self._run_in_background(
+            "Refreshing Caseload",
+            lambda control: self._load_caseload_logging_in_if_needed(),
+            on_finished=_done, on_failed=_failed, stoppable=False,
+            status="Loading the caseload from Salesforce… (a login window may open)",
+        )
 
     def handle_sync_ids_requested(self) -> None:
         self.activity_logger.log("Sync Texting IDs clicked")
@@ -1097,4 +1154,72 @@ class AppController:
     # endregion
 
     def run(self) -> None:
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_requested)
         self.root.mainloop()
+
+    def _on_close_requested(self) -> None:
+        """Closing the window mid-run would cut the background run off
+        partway through a student - confirm first."""
+        if self._active_run is not None and not messagebox.askyesno(
+            "A run is still going",
+            "A run is still in progress. Quit anyway?\n\n"
+            "The student being processed right now may be left half-done "
+            "(e.g. emailed but no note). Press Stop and wait instead to finish cleanly.",
+        ):
+            return
+        self.root.destroy()
+
+    # region Background runs
+    def _is_busy_and_told_user(self) -> bool:
+        """True (after telling the professor) if a run or refresh is already
+        going - only one at a time."""
+        if self._active_run is None:
+            return False
+        messagebox.showinfo(
+            "Already running",
+            "Something is already running. Wait for it to finish, or press Stop.",
+        )
+        return True
+
+    def _run_in_background(
+        self,
+        title: str,
+        work,
+        on_finished,
+        on_failed=None,
+        stoppable: bool = True,
+        status: str = "Starting…",
+    ) -> None:
+        """Runs work(control) on the background worker while a progress
+        window shows how it's going, then calls on_finished(result) - or
+        on_failed(exc), default an error popup - back on the UI thread."""
+        if self._is_busy_and_told_user():
+            return
+        control = RunControl()
+        window = RunProgressModal(self.root, title, on_stop=control.request_stop if stoppable else None)
+        window.set_status(status)
+        control.on_progress = lambda position, total, text: self.ui.call_soon(
+            window.update_progress, position, total, text
+        )
+        self._active_run = control
+        self._progress_window = window
+
+        def _end():
+            self._active_run = None
+            self._progress_window = None
+            window.close()
+
+        def _finished(result):
+            _end()
+            on_finished(result)
+
+        def _failed(exc):
+            _end()
+            self.activity_logger.log(f"[{title.upper()} FAILED] {exc}")
+            if on_failed:
+                on_failed(exc)
+            else:
+                messagebox.showerror(title, f"Something went wrong, and the run stopped:\n\n{exc}")
+
+        self.worker.submit(lambda: work(control), on_done=_finished, on_error=_failed)
+    # endregion

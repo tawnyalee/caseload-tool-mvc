@@ -726,3 +726,66 @@ def test_send_ad_hoc_email_skips_the_note_for_a_student_whose_email_failed(tmp_p
     assert summary.failed == 1  # Jane's email
     assert summary.skipped == 1  # Jane's note, skipped rather than attempted
     assert len(note_writer.written) == 2  # John and Amy only
+
+
+# --- RunControl: progress and stopping -----------------------------------
+
+from src.services.action_runner import RunControl
+
+
+def test_run_reports_progress_before_each_student(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+    seen = []
+
+    runner.run(_make_action(template.id), group_name="G", control=RunControl(on_progress=lambda *a: seen.append(a)))
+
+    assert seen == [(1, 3, "Jane Doe"), (2, 3, "John Roe"), (3, 3, "Amy Lee")]
+
+
+def test_stop_finishes_the_current_student_then_marks_the_rest_not_started(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, _, _ = _make_runner(tmp_path, students)
+    control = RunControl()
+    # Ask to stop while the first student is being processed.
+    control.on_progress = lambda position, total, name: control.request_stop() if position == 1 else None
+
+    summary = runner.run(_make_action(template.id), group_name="G", control=control)
+
+    assert [s["to"] for s in email_sender.sent] == ["jane@example.test"]  # Jane finished
+    stopped = [r for r in summary.results if r.step_type == "stopped"]
+    assert [r.student.salesforce_id for r in stopped] == ["SF2", "SF3"]
+    assert all(r.outcome == "skipped" for r in stopped)
+
+
+def test_ad_hoc_email_can_be_stopped_too(tmp_path):
+    students = _make_students()
+    runner, _, email_sender, _, _ = _make_runner(tmp_path, students)
+    control = RunControl()
+    control.request_stop()  # stopped before anyone
+
+    summary = runner.send_ad_hoc_email("Hi", "<p>x</p>", control=control)
+
+    assert email_sender.sent == []
+    assert [r.step_type for r in summary.results] == ["stopped"] * 3
+
+
+def test_batch_labels_progress_with_the_item_and_stops_across_items(tmp_path):
+    students = _make_students()
+    runner, template, email_sender, _, _ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_text=False, has_note=False)
+    seen = []
+    control = RunControl()
+
+    def on_progress(position, total, text):
+        seen.append(text)
+        if text.startswith("D424"):
+            control.request_stop()  # during the first item's first student
+    control.on_progress = on_progress
+
+    batch = runner.run_batch([(action, "D424"), (action, "D425")], control=control)
+
+    assert seen == ["D424 — Welcome Action (1 of 2): Jane Doe"]
+    assert len(email_sender.sent) == 1
+    second_item = batch.items[1].summary
+    assert [r.step_type for r in second_item.results] == ["stopped"] * 3

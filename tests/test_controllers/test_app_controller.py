@@ -27,15 +27,38 @@ from models.student import Student
 # no-ops the patch and lets the real (live, network-calling) code run instead.
 from src.services.student_data_provider import CachingStudentDataProvider, PlaywrightStudentDataProvider
 from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR
+from src.services.action_runner import RunControl
+from unittest.mock import ANY
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services.test_mode import RedirectingEmailSender
 from src.services.text_sender import UnavailableTextSender
 
 
+
+def _runs_synchronously(controller):
+    """Stand-in for the background worker in tests that drive a handler
+    against a MagicMock controller: nothing is busy, and work runs right
+    away on this thread so the test can check the result directly. The
+    real threading is covered by test_background_worker.py."""
+    controller._is_busy_and_told_user = lambda: False
+
+    def run_now(title, work, on_finished, on_failed=None, stoppable=True, status=""):
+        try:
+            result = work(RunControl())
+        except Exception as exc:
+            if on_failed is None:
+                raise
+            on_failed(exc)
+            return
+        on_finished(result)
+
+    controller._run_in_background = run_now
+    return controller
+
 def test_handle_add_action_clicked_reads_nav_panel_group():
     # Arrange: Setup mock controller with nav_panel
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller.groups = [MagicMock(name="Group 1")]
     
     # Mock nav_panel and its group dropdown selection
@@ -244,7 +267,7 @@ def test_handle_send_ad_hoc_email_opens_review_dialog_then_sends_on_confirm(mock
     documented on test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wired
     above) and only sends once the dialog's on_confirm callback fires,
     simulating the professor clicking Send."""
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller.action_runner.send_ad_hoc_email.return_value = ActionRunSummary()
     controller.action_runner.student_provider.get_students.return_value = []
 
@@ -265,7 +288,7 @@ def test_handle_send_ad_hoc_email_opens_review_dialog_then_sends_on_confirm(mock
     controller.action_runner.send_ad_hoc_email.assert_called_once_with(
         "Class Canceled", "<p>No class today.</p>", "Sig",
         note_subject="Broadcast sent", note_body="Notified", follow_up_note="See broadcast",
-        included_student_ids={"SF1", "SF2"},
+        included_student_ids={"SF1", "SF2"}, control=ANY,
     )
     mock_showinfo.assert_called_once()
 
@@ -273,7 +296,7 @@ def test_handle_send_ad_hoc_email_opens_review_dialog_then_sends_on_confirm(mock
 @patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.ReviewSendModal")
 def test_handle_send_ad_hoc_email_shows_results_window_on_failures(mock_modal, mock_results):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     failed_summary = ActionRunSummary(
         results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
     )
@@ -293,7 +316,7 @@ def test_handle_send_ad_hoc_email_shows_results_window_on_failures(mock_modal, m
 @patch("src.controllers.app_controller.messagebox.showinfo")
 @patch("controllers.app_controller.ReviewSendModal")
 def test_handle_run_action_opens_review_dialog_with_matches_then_runs_on_confirm(mock_modal, mock_showinfo):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     action = Action(name="Welcome Action", group_id="G1", is_email=True, email_subject="Welcome!")
     controller.scenarios_raw = {"Welcome Action": action}
     controller.action_runner.get_matching_students.return_value = ["s1", "s2"]
@@ -315,7 +338,7 @@ def test_handle_run_action_opens_review_dialog_with_matches_then_runs_on_confirm
 
     controller.action_runner.run.assert_called_once_with(
         action, group_name="D424", included_student_ids={"SF1"},
-        email_subject_override="Edited Subject", email_body_override="Edited body",
+        email_subject_override="Edited Subject", email_body_override="Edited body", control=ANY,
     )
     mock_showinfo.assert_called_once()
 
@@ -323,7 +346,7 @@ def test_handle_run_action_opens_review_dialog_with_matches_then_runs_on_confirm
 @patch("src.controllers.app_controller.messagebox.showinfo")
 @patch("controllers.app_controller.ReviewSendModal")
 def test_handle_run_action_non_email_action_does_not_pass_content_overrides(mock_modal, mock_showinfo):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     action = Action(name="Text Only", group_id="G1", is_email=False, is_text=True)
     controller.scenarios_raw = {"Text Only": action}
     controller.action_runner.get_matching_students.return_value = ["s1"]
@@ -340,7 +363,7 @@ def test_handle_run_action_non_email_action_does_not_pass_content_overrides(mock
 
     controller.action_runner.run.assert_called_once_with(
         action, group_name="General", included_student_ids={"SF1"},
-        email_subject_override=None, email_body_override=None,
+        email_subject_override=None, email_body_override=None, control=ANY,
     )
 
 
@@ -351,7 +374,7 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mo
     multi-item review dialog first (patched here for the same
     module-identity reason as the other modal-opening tests in this file)
     and only runs once its on_confirm callback fires."""
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     batch_summary = BatchRunSummary(items=[
         BatchItemResult(action_name="Action A", group_name="Group A", summary=ActionRunSummary()),
     ])
@@ -366,7 +389,7 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mo
     kwargs["on_confirm"]({"0": {"SF1"}})
 
     controller.action_runner.run_batch.assert_called_once_with(
-        [(action, "Group A")], included_ids_by_index={0: {"SF1"}}
+        [(action, "Group A")], included_ids_by_index={0: {"SF1"}}, control=ANY
     )
     mock_showinfo.assert_called_once()
 
@@ -374,7 +397,7 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mo
 @patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.MultiReviewSendModal")
 def test_handle_run_batch_shows_results_window_when_an_action_errors(mock_modal, mock_results):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     batch_summary = BatchRunSummary(items=[
         BatchItemResult(action_name="Broken", group_name="Group A", summary=ActionRunSummary(), error="boom"),
     ])
@@ -394,7 +417,7 @@ def test_handle_run_batch_shows_results_window_when_an_action_errors(mock_modal,
 @patch("controllers.app_controller.RunSummaryModal")
 @patch("controllers.app_controller.MultiReviewSendModal")
 def test_handle_run_batch_shows_results_window_when_a_step_failed(mock_modal, mock_results):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     failed_summary = ActionRunSummary(
         results=[StepResult(student=MagicMock(), step_type="email", outcome="failed")]
     )
@@ -414,7 +437,7 @@ def test_handle_run_batch_shows_results_window_when_a_step_failed(mock_modal, mo
 
 @patch("controllers.app_controller.MultiReviewSendModal")
 def test_handle_run_batch_builds_review_items_with_each_actions_matches(mock_modal):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     action_a = MagicMock()
     action_b = MagicMock()
     action_a.name = "Welcome"
@@ -436,7 +459,7 @@ def test_handle_run_batch_builds_review_items_with_each_actions_matches(mock_mod
 @patch("src.controllers.app_controller.messagebox.showinfo")
 @patch("controllers.app_controller.MultiReviewSendModal")
 def test_handle_send_welcome_emails_only_includes_groups_with_a_valid_welcome_action(mock_modal, mock_showinfo):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     action = MagicMock()
     action.name = "Welcome"
     controller.action_repo.load_actions.return_value = [action]
@@ -461,7 +484,7 @@ def test_handle_send_welcome_emails_only_includes_groups_with_a_valid_welcome_ac
     kwargs["on_confirm"]({"G1": {"s1"}})
 
     controller.action_runner.run_welcome_emails.assert_called_once_with(
-        controller.groups, {"ACT-1": action}, included_ids_by_group_id={"G1": {"s1"}}
+        controller.groups, {"ACT-1": action}, included_ids_by_group_id={"G1": {"s1"}}, control=ANY
     )
     mock_showinfo.assert_called_once()
 
@@ -509,7 +532,7 @@ def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wire
 
 
 def test_handle_save_batch_persists_via_saved_batch_repo(tmp_path):
-    controller = AppController.__new__(AppController)
+    controller = _runs_synchronously(AppController.__new__(AppController))
     controller.saved_batch_repo = SavedBatchRepository(data_file=tmp_path / "saved_batches.json")
 
     saved = controller._handle_save_batch("Weekly Follow-ups", ["A1", "A2"])
@@ -520,7 +543,7 @@ def test_handle_save_batch_persists_via_saved_batch_repo(tmp_path):
 
 
 def test_handle_delete_batch_removes_via_saved_batch_repo(tmp_path):
-    controller = AppController.__new__(AppController)
+    controller = _runs_synchronously(AppController.__new__(AppController))
     controller.saved_batch_repo = SavedBatchRepository(data_file=tmp_path / "saved_batches.json")
     saved = controller.saved_batch_repo.save_batch("Weekly Follow-ups", ["A1"])
 
@@ -586,7 +609,7 @@ def test_refresh_caseload_at_startup_failure_does_not_crash_app_construction(
 
 
 def test_handle_refresh_requested_shows_the_new_student_count_on_success():
-    controller = AppController.__new__(AppController)
+    controller = _runs_synchronously(AppController.__new__(AppController))
     controller.activity_logger = MagicMock()
     controller._log_in_to_salesforce = MagicMock()  # never open a real login window
     fake_provider = MagicMock()
@@ -602,7 +625,7 @@ def test_handle_refresh_requested_shows_the_new_student_count_on_success():
 
 
 def test_handle_refresh_requested_shows_an_error_on_failure():
-    controller = AppController.__new__(AppController)
+    controller = _runs_synchronously(AppController.__new__(AppController))
     controller.activity_logger = MagicMock()
     controller._log_in_to_salesforce = MagicMock()  # never open a real login window
     fake_provider = MagicMock()
@@ -657,7 +680,7 @@ from src.services import salesforce_browser_session as sbs
 
 @patch.object(sbs, "has_session", return_value=False)
 def test_loading_the_caseload_logs_in_first_when_nobody_has(mock_has_session):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller.student_data_provider.refresh.return_value = ["s1"]
     load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
 
@@ -667,7 +690,7 @@ def test_loading_the_caseload_logs_in_first_when_nobody_has(mock_has_session):
 
 @patch.object(sbs, "has_session", return_value=True)
 def test_loading_the_caseload_skips_login_when_already_logged_in(mock_has_session):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller.student_data_provider.refresh.return_value = ["s1"]
     load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
 
@@ -678,7 +701,7 @@ def test_loading_the_caseload_skips_login_when_already_logged_in(mock_has_sessio
 @patch.object(sbs, "clear_session")
 @patch.object(sbs, "has_session", return_value=True)
 def test_expired_login_asks_to_log_in_again_then_retries_once(mock_has_session, mock_clear):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller.student_data_provider.refresh.side_effect = [sbs.SessionExpiredError("expired"), ["s1"]]
     load = AppController._load_caseload_logging_in_if_needed.__get__(controller, AppController)
 
@@ -688,7 +711,7 @@ def test_expired_login_asks_to_log_in_again_then_retries_once(mock_has_session, 
 
 
 def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller._startup_problem = None
     controller._load_caseload_logging_in_if_needed.side_effect = RuntimeError("The Salesforce login window was closed before login finished.")
     startup = AppController._refresh_caseload_at_startup.__get__(controller, AppController)
@@ -700,7 +723,7 @@ def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
 
 @patch("src.controllers.app_controller.messagebox.showinfo")
 def test_refresh_caseload_button_logs_in_if_needed(mock_showinfo):
-    controller = MagicMock()
+    controller = _runs_synchronously(MagicMock())
     controller._load_caseload_logging_in_if_needed.return_value = ["s1", "s2"]
     refresh = AppController.handle_refresh_requested.__get__(controller, AppController)
 
@@ -708,3 +731,125 @@ def test_refresh_caseload_button_logs_in_if_needed(mock_showinfo):
 
     controller._load_caseload_logging_in_if_needed.assert_called_once()
     assert "2 students" in mock_showinfo.call_args[0][1]
+
+
+# --- Background runs: progress window, busy guard, Stop, quitting ---------
+
+class _ImmediateWorker:
+    """Runs submitted work right away on this thread (the real one uses a
+    background thread - covered by test_background_worker.py)."""
+    def submit(self, work, on_done, on_error):
+        try:
+            result = work()
+        except Exception as exc:
+            on_error(exc)
+        else:
+            on_done(result)
+
+
+def _bare_controller():
+    controller = AppController.__new__(AppController)
+    controller.root = MagicMock()
+    controller.ui = MagicMock()
+    controller.ui.call_soon.side_effect = lambda fn, *args: fn(*args)
+    controller.worker = _ImmediateWorker()
+    controller.activity_logger = MagicMock()
+    controller._active_run = None
+    controller._progress_window = None
+    return controller
+
+
+@patch("controllers.app_controller.RunProgressModal")
+def test_background_run_shows_progress_then_closes_it_and_delivers_the_result(mock_window_cls):
+    controller = _bare_controller()
+    seen = {}
+
+    def work(control):
+        seen["busy_during_work"] = controller._active_run is control
+        control.report(1, 2, "Jane Doe")
+        return "summary"
+
+    controller._run_in_background("Run", work, on_finished=lambda r: seen.setdefault("result", r))
+
+    window = mock_window_cls.return_value
+    window.update_progress.assert_called_once_with(1, 2, "Jane Doe")
+    window.close.assert_called_once()
+    assert seen == {"busy_during_work": True, "result": "summary"}
+    assert controller._active_run is None
+
+
+@patch("controllers.app_controller.messagebox.showerror")
+@patch("controllers.app_controller.RunProgressModal")
+def test_background_run_failure_closes_progress_and_shows_the_error(mock_window_cls, mock_showerror):
+    controller = _bare_controller()
+
+    def work(control):
+        raise RuntimeError("Outlook did not respond")
+
+    controller._run_in_background("Run", work, on_finished=lambda r: None)
+
+    mock_window_cls.return_value.close.assert_called_once()
+    assert "Outlook did not respond" in mock_showerror.call_args[0][1]
+    assert controller._active_run is None
+
+
+@patch("controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.RunProgressModal")
+def test_a_second_run_is_refused_while_one_is_going(mock_window_cls, mock_showinfo):
+    controller = _bare_controller()
+    controller._active_run = RunControl()  # something is already running
+    work = MagicMock()
+
+    controller._run_in_background("Run", work, on_finished=lambda r: None)
+
+    work.assert_not_called()
+    mock_window_cls.assert_not_called()
+    assert "already running" in mock_showinfo.call_args[0][1]
+
+
+@patch("controllers.app_controller.messagebox.showinfo")
+def test_handlers_refuse_to_open_while_busy(mock_showinfo):
+    controller = _bare_controller()
+    controller._active_run = RunControl()
+    controller.action_runner = MagicMock()
+
+    AppController.handle_send_ad_hoc_email(controller, subject="S", body="B")
+
+    controller.action_runner.student_provider.get_students.assert_not_called()
+    mock_showinfo.assert_called_once()
+
+
+@patch("controllers.app_controller.messagebox.showinfo")
+def test_stop_button_with_nothing_running_just_says_so(mock_showinfo):
+    controller = _bare_controller()
+    AppController.handle_stop_requested(controller)
+    assert "Nothing is running" in mock_showinfo.call_args[0][1]
+
+
+def test_stop_button_stops_the_current_run_via_its_progress_window():
+    controller = _bare_controller()
+    controller._active_run = RunControl()
+    controller._progress_window = MagicMock()
+
+    AppController.handle_stop_requested(controller)
+
+    controller._progress_window.request_stop.assert_called_once()
+
+
+@patch("controllers.app_controller.messagebox.askyesno", return_value=False)
+def test_closing_the_app_mid_run_asks_first_and_can_be_cancelled(mock_ask):
+    controller = _bare_controller()
+    controller._active_run = RunControl()
+
+    AppController._on_close_requested(controller)
+
+    mock_ask.assert_called_once()
+    controller.root.destroy.assert_not_called()
+
+
+@patch("controllers.app_controller.messagebox.askyesno")
+def test_closing_the_app_when_idle_just_closes(mock_ask):
+    controller = _bare_controller()
+    AppController._on_close_requested(controller)
+    mock_ask.assert_not_called()
+    controller.root.destroy.assert_called_once()

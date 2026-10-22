@@ -26,6 +26,8 @@ def _short_detail(detail: str) -> str:
 def describe_step(result: StepResult) -> str:
     """e.g. '❌ Jane Doe (ID 000123) — Email failed: SMTP timeout'."""
     icon = _OUTCOME_ICONS.get(result.outcome, "•")
+    if result.step_type == "stopped":  # see ActionRunner._stopped
+        return f"{icon} {result.student.full_name} (ID {result.student.salesforce_id}) — Not started (run was stopped)"
     step = _STEP_LABELS.get(result.step_type, result.step_type)
     line = f"{icon} {result.student.full_name} (ID {result.student.salesforce_id}) — {step} {result.outcome}"
     detail = _short_detail(result.detail)

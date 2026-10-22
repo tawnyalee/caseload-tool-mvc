@@ -62,3 +62,8 @@ def test_batch_issue_lines_groups_by_item_and_omits_clean_items():
         "D426 — Broken",
         "    ⚠ Action could not run: Template missing",
     ]
+
+
+def test_stopped_students_read_as_not_started():
+    result = StepResult(student=JANE, step_type="stopped", outcome="skipped", detail="Run was stopped before this student")
+    assert describe_step(result) == "⏭ Jane Doe (ID 000123) — Not started (run was stopped)"
