@@ -1,14 +1,14 @@
 import json
 from pathlib import Path
+
+from src.services import app_paths
 from typing import List, Optional
 from src.models.group import Group
 
 class GroupRepository:
     def __init__(self, data_file: Optional[Path] = None) -> None:
         if data_file is None:
-            # Resolves dynamically to src/data/groups.json
-            project_root = Path(__file__).resolve().parent.parent
-            data_file = project_root / "data" / "groups.json"
+            data_file = app_paths.groups_file()  # %LOCALAPPDATA%\CaseloadTool - see app_paths.py
             
         self.data_file = data_file
         self._ensure_file_exists()
@@ -21,7 +21,7 @@ class GroupRepository:
                 json.dump([], f)
 
     def load_groups(self) -> List[Group]:
-        """Loads all groups from src/data/groups.json into Group objects."""
+        """Loads all groups from groups.json into Group objects."""
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -40,7 +40,7 @@ class GroupRepository:
             return []
 
     def save_groups(self, groups: List[Group]) -> None:
-        """Saves a list of Group objects to src/data/groups.json."""
+        """Saves a list of Group objects to groups.json."""
         serialized = [
             {
                 "id": g.id,

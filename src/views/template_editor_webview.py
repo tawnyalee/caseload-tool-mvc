@@ -3,6 +3,8 @@ import os
 import threading
 import webview
 
+from src.services import app_paths
+
 
 class _EditorAPI:
     def __init__(self, template_id, on_save_callback):
@@ -28,9 +30,8 @@ def open_template_editor(template_id=None, template_name="", template_body="", o
     def _run():
         api = _EditorAPI(template_id, on_save_callback)
 
-        html_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "assets", "quill", "editor.html"
-        )
+        # Shipped with the app - resource_path also finds it inside the .exe build.
+        html_path = str(app_paths.resource_path("src/assets/quill/editor.html"))
 
         window = webview.create_window(
             "Template Editor",

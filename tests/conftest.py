@@ -2,6 +2,8 @@
 """Project-wide test safeguards (pytest loads this automatically)."""
 import pytest
 
+from src.services import app_paths
+
 from src.services import mongoose_browser_session, salesforce_browser_session
 
 
@@ -36,3 +38,14 @@ def _never_open_a_visible_mongoose_login_window(monkeypatch):
         return real_login(playwright, logged_in_selector, target_url=target_url, headless=True)
 
     monkeypatch.setattr(mongoose_browser_session, "log_in_interactively", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data_folder(tmp_path, monkeypatch):
+    """Every test gets its own empty data folder, so nothing a test saves
+    (groups, actions, templates, logs...) ever lands in the real
+    app data folder (%LOCALAPPDATA% / CaseloadTool). Before 2026-10-22 tests wrote straight
+    into the real data files (a long-standing known quirk)."""
+    folder = tmp_path / "caseload_data"
+    monkeypatch.setenv(app_paths.DATA_DIR_ENV_VAR, str(folder))
+    return folder

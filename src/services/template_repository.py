@@ -1,12 +1,15 @@
 import json
 from pathlib import Path
+
+from src.services import app_paths
 from typing import List, Optional
 from src.models.email_template import EmailTemplate
 
 
 class TemplateRepository:
-    def __init__(self, file_path: str = "data/templates.json"):
-        self.file_path = Path(file_path)
+    def __init__(self, file_path: Optional[str] = None):
+        # Default: %LOCALAPPDATA%\CaseloadTool - see app_paths.py
+        self.file_path = Path(file_path) if file_path else app_paths.templates_file()
         # Ensure directory exists
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         # Initialize empty file if it doesn't exist

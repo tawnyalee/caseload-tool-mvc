@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict, List, Optional
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
@@ -17,12 +18,13 @@ from src.services.student_data_provider import (
     PlaywrightStudentDataProvider,
 )
 from src.services.outlook_email_sender import OutlookEmailSender
-from src.services.test_mode import DEFAULT_TEST_MODE_FILE, RedirectingEmailSender, load_redirect_email
+from src.services import app_paths
+from src.services.test_mode import RedirectingEmailSender, load_redirect_email
 from src.services.text_sender import UnavailableTextSender
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services import salesforce_browser_session
 from src.services.salesforce_callbacks import (
-    CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, SCREENSHOTS_DIR, update_follow_up_fn, write_note_fn,
+    CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
 )
 from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
 from src.services.action_runner import ActionRunner, RunControl
@@ -62,11 +64,10 @@ class PlaceholderView(ctk.CTkFrame):
 
 
 class AppController:
-    # The repo's logs/ folder (screenshots live in logs/screenshots/), anchored
-    # to this file rather than the current working directory, so startup
-    # cleanup always targets the same folder the logger writes to.
-    LOG_DIR = SCREENSHOTS_DIR.parent
-    TEST_MODE_FILE = DEFAULT_TEST_MODE_FILE
+    # None = the real per-user locations (app_paths.py). Class attributes
+    # only so tests can point them elsewhere.
+    LOG_DIR = None
+    TEST_MODE_FILE = None
 
     # region Initialization
     def __init__(self) -> None:
@@ -90,9 +91,10 @@ class AppController:
         self.saved_batch_repo = SavedBatchRepository()
         # Before the logger opens today's file. Logs/screenshots can hold
         # student names, so nothing older than today is kept (see purge_old_logs).
-        removed_count = purge_old_logs(self.LOG_DIR, SCREENSHOTS_DIR)
+        log_dir = self.LOG_DIR or app_paths.logs_dir()
+        removed_count = purge_old_logs(log_dir, Path(log_dir) / "screenshots")
         # ui_callback is wired up in _init_views() once nav_panel exists
-        self.activity_logger = ActivityLogger(log_dir=str(self.LOG_DIR))
+        self.activity_logger = ActivityLogger(log_dir=str(log_dir))
         if removed_count:
             self.activity_logger.log(f"Cleared {removed_count} log file(s)/screenshot(s) from previous days")
 
@@ -112,10 +114,11 @@ class AppController:
                 export_button_selector=EXPORT_BUTTON_SELECTOR,
             )
         )
-        # Test mode (data/test_mode.json, see test_mode.py): every email goes
+        # Test mode (test_mode.json in the data folder, see test_mode.py): every email goes
         # to one test address and notes skip Salesforce, so the real app can
         # be tried against the real roster without contacting any student.
-        self.test_mode_redirect = load_redirect_email(self.TEST_MODE_FILE)
+        self.test_mode_file = self.TEST_MODE_FILE or app_paths.test_mode_file()
+        self.test_mode_redirect = load_redirect_email(self.test_mode_file)
         self.test_mode = self.test_mode_redirect is not None
 
         # Real Outlook (Classic) sending - Outlook is only contacted on the
@@ -142,7 +145,7 @@ class AppController:
             self.note_writer = FakeNoteWriter()
             self.activity_logger.log(
                 f"TEST MODE ON - all email goes to {self.test_mode_redirect or '(no valid address - sends will fail)'}; "
-                f"notes are not written to Salesforce. Delete data/test_mode.json to go live."
+                f"notes are not written to Salesforce. Delete {self.test_mode_file} to go live."
             )
 
         # Real, not fake — this just lists files under the local Outlook
@@ -264,7 +267,7 @@ class AppController:
             ctk.CTkLabel(
                 self.root,
                 text=f"🧪 TEST MODE — all email goes to {target}, notes are NOT written to Salesforce. "
-                     f"Delete data/test_mode.json to go live.",
+                     f"Delete {self.test_mode_file} to go live.",
                 fg_color="#e0b400", text_color="black", corner_radius=0,
                 font=ctk.CTkFont(weight="bold"), height=32,
             ).pack(side="top", fill="x")

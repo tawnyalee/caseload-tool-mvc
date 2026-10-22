@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+
+from src.services import app_paths
 from typing import List, Optional
 from src.models.saved_batch import SavedBatch
 
@@ -7,9 +9,7 @@ from src.models.saved_batch import SavedBatch
 class SavedBatchRepository:
     def __init__(self, data_file: Optional[Path] = None) -> None:
         if data_file is None:
-            # Resolves dynamically to src/data/saved_batches.json
-            project_root = Path(__file__).resolve().parent.parent
-            data_file = project_root / "data" / "saved_batches.json"
+            data_file = app_paths.saved_batches_file()  # %LOCALAPPDATA%\CaseloadTool - see app_paths.py
 
         self.data_file = data_file
         self._ensure_file_exists()
@@ -22,7 +22,7 @@ class SavedBatchRepository:
                 json.dump([], f)
 
     def load_batches(self) -> List[SavedBatch]:
-        """Loads all saved batches from src/data/saved_batches.json."""
+        """Loads all saved batches from saved_batches.json."""
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
@@ -38,7 +38,7 @@ class SavedBatchRepository:
             return []
 
     def save_batches(self, batches: List[SavedBatch]) -> None:
-        """Saves a list of SavedBatch objects to src/data/saved_batches.json."""
+        """Saves a list of SavedBatch objects to saved_batches.json."""
         serialized = [
             {"id": b.id, "name": b.name, "action_ids": b.action_ids}
             for b in batches

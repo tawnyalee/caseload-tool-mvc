@@ -9,8 +9,8 @@ any real student or touching Salesforce. While it's on:
   - texts are unaffected (still fake regardless, for now)
   - the app shows a TEST MODE banner and window title
 
-Turned on by a small settings file, data/test_mode.json (gitignored, per
-machine):
+Turned on by a small settings file, test_mode.json in the app's data
+folder (%LOCALAPPDATA%/CaseloadTool - see app_paths.py):
 
     {"redirect_email": "you@example.com"}
 
@@ -25,19 +25,19 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from src.services import app_paths
 from src.services.email_sender import EmailSender
 
-DEFAULT_TEST_MODE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "test_mode.json"
 
 # Sentinel for "file exists but has no usable address" - test mode stays on.
 INVALID_REDIRECT = ""
 
 
-def load_redirect_email(path: Path = DEFAULT_TEST_MODE_FILE) -> Optional[str]:
+def load_redirect_email(path: Optional[Path] = None) -> Optional[str]:
     """None = test mode off (no file). Otherwise test mode is on, and the
     return value is the address to redirect to (INVALID_REDIRECT if the
     file can't be read or has no address)."""
-    path = Path(path)
+    path = Path(path) if path else app_paths.test_mode_file()
     if not path.exists():
         return None
     try:
@@ -65,7 +65,7 @@ class RedirectingEmailSender(EmailSender):
             raise RuntimeError("Student has no email address")
         if not self.redirect_to:
             raise RuntimeError(
-                "TEST MODE is on but data/test_mode.json has no valid redirect_email - nothing was sent"
+                f"TEST MODE is on but {app_paths.test_mode_file()} has no valid redirect_email - nothing was sent"
             )
         banner = (
             '<p style="background:#fff3cd;border:1px solid #e0b400;padding:8px;font-family:Arial">'

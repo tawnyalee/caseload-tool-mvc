@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+
+from src.services import app_paths
 from typing import List, Optional
 from src.models.action import Action
 from src.models.enums import InteractionType
@@ -8,9 +10,7 @@ from src.models.enums import InteractionType
 class ActionRepository:
     def __init__(self, data_file: Optional[Path] = None) -> None:
         if data_file is None:
-            # Resolves dynamically to src/data/actions.json
-            project_root = Path(__file__).resolve().parent.parent
-            data_file = project_root / "data" / "actions.json"
+            data_file = app_paths.actions_file()  # %LOCALAPPDATA%\CaseloadTool - see app_paths.py
 
         self.data_file = data_file
         self._ensure_file_exists()

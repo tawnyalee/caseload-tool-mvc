@@ -34,6 +34,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from src.services import app_paths
+
 from playwright.sync_api import Page
 
 CASELOAD_APP_URL = "https://srm.lightning.force.com/lightning/n/Caseload_App_Page?overrideNavRules=true"
@@ -42,18 +44,20 @@ EXPORT_BUTTON_SELECTOR = '[title="Download"]'
 # Reuses the existing gitignored logs/ directory rather than adding a new
 # ignore entry - screenshots are debug artifacts, same category as the
 # ActivityLogger's daily log files.
-SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "screenshots"
+def screenshots_dir() -> Path:
+    return app_paths.screenshots_dir()  # %LOCALAPPDATA%\CaseloadTool\logs\screenshots
 
 
 def _screenshot_failure(page: Page, tag: str) -> Path:
-    """Saves a full-page screenshot to SCREENSHOTS_DIR and returns its path,
+    """Saves a full-page screenshot to screenshots_dir() and returns its path,
     for a failure message to point at - so a failed unattended run leaves
     behind a picture of exactly what the page looked like, not just a bare
     Playwright timeout/selector error. Best-effort: if the page itself is
     already gone (e.g. the browser closed mid-failure), the screenshot is
     skipped rather than raising a second error that would mask the first."""
-    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = SCREENSHOTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{tag}.png"
+    folder = screenshots_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / f"{datetime.now():%Y%m%d-%H%M%S}-{tag}.png"
     try:
         page.screenshot(path=str(out), full_page=True)
     except Exception:

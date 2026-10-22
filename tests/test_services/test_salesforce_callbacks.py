@@ -23,7 +23,7 @@ class FakePage:
 @pytest.fixture
 def temp_screenshots_dir(tmp_path: Path, monkeypatch) -> Path:
     screenshots_dir = tmp_path / "logs" / "screenshots"
-    monkeypatch.setattr(salesforce_callbacks, "SCREENSHOTS_DIR", screenshots_dir)
+    monkeypatch.setattr(salesforce_callbacks, "screenshots_dir", lambda: screenshots_dir)
     return screenshots_dir
 
 

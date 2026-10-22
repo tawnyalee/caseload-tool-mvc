@@ -44,7 +44,7 @@ class FakeStudentDataProvider(StudentDataProvider):
     """Loads students from a local, hand-editable JSON fixture — lets the app
     be built and tested end-to-end without touching real student data."""
 
-    def __init__(self, file_path: str = "data/fake_students.json"):
+    def __init__(self, file_path: str = str(Path(__file__).resolve().parent.parent.parent / "data" / "fake_students.json")):
         self.file_path = Path(file_path)
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.file_path.exists():

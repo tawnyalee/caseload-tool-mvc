@@ -32,6 +32,8 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from src.services import app_paths
 from typing import Dict, List, Optional
 
 from src.models.student import Student
@@ -44,10 +46,8 @@ FIRST_NAME_COLUMN = "firstName"
 LAST_NAME_COLUMN = "lastName"
 OPTED_OUT_COLUMN = "optedOut"
 
-# Where the persisted StudentID -> Mongoose Contact Id map lives. Same
-# per-install-local-data pattern as src/data/groups.json etc. (see
-# .gitignore) - this is derived data, not something to ship or share.
-DEFAULT_MAP_FILE = Path(__file__).resolve().parent.parent / "data" / "mongoose_contact_ids.json"
+# The persisted StudentID -> Mongoose Contact Id map lives with the rest of
+# the per-user data (%LOCALAPPDATA%\CaseloadTool - see app_paths.py).
 
 _NON_DIGITS = re.compile(r"\D+")
 
@@ -173,7 +173,7 @@ class MongooseContactIdRepository:
     (a student added/removed, a phone number corrected)."""
 
     def __init__(self, data_file: Optional[Path] = None) -> None:
-        self.data_file = data_file or DEFAULT_MAP_FILE
+        self.data_file = data_file or app_paths.mongoose_contact_ids_file()
         self._ensure_file_exists()
 
     def _ensure_file_exists(self) -> None:
