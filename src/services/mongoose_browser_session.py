@@ -1,70 +1,82 @@
 # src/services/mongoose_browser_session.py
 """Playwright-based browser session management for Mongoose (Cadence),
-mirroring salesforce_browser_session.py's approach - MFA/SSO can't be
-completed by unattended code, so this is deliberately semi-interactive:
-scripts/mongoose_login.py opens a real, visible browser window once, the
-developer logs in themselves, and the resulting session (cookies/local
-storage) is saved to STORAGE_STATE_PATH. Anything that needs an
-authenticated Mongoose session afterward loads that saved state instead of
-logging in again, until the session expires - at which point
-scripts/mongoose_login.py needs to be re-run.
+mirroring salesforce_browser_session.py: login can't be automated (SSO/
+MFA), so log_in_interactively() opens a visible browser, the professor
+logs in themselves, and the resulting session (cookies) is kept IN MEMORY
+for the rest of this app session. Nothing is ever written to disk
+(developer's explicit call, 2026-10-22 - same rule as Salesforce).
 
-This is a COMPLETELY SEPARATE session/browser context from Salesforce's -
-Mongoose is a different site with its own login, not something that
-piggybacks on the Salesforce session at all.
+This is a COMPLETELY SEPARATE session from Salesforce's - Mongoose is a
+different site with its own login.
 
-STORAGE_STATE_PATH's contents are as sensitive as a password - whoever
-holds the file can act as the logged-in session. Never commit it, never
-log its contents; .gitignore already excludes it.
+What proves "logged in" on Mongoose isn't known yet: the caller passes
+`logged_in_selector` - an element that only exists once logged in (e.g.
+something on the inbox/dashboard). Capture it during the Mongoose
+`playwright codegen` recording session, along with the compose/schedule
+selectors, rather than guessing now. Nothing calls this yet; the real
+Mongoose TextSender will.
 """
-from pathlib import Path
+from typing import Optional
 
-from playwright.sync_api import BrowserContext, Playwright
+from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-STORAGE_STATE_PATH = REPO_ROOT / "data" / ".mongoose_session.json"
+MONGOOSE_URL = "https://sms.mongooseresearch.com"
+LOGIN_TIMEOUT_MS = 5 * 60 * 1000
+
+NOT_LOGGED_IN_MESSAGE = "Not logged in to Mongoose - log in again to send texts."
+
+# Playwright storage_state as a dict - cookies for this app session only.
+_session_state: Optional[dict] = None
 
 
-def has_saved_session() -> bool:
-    return STORAGE_STATE_PATH.exists()
+class NotLoggedInError(RuntimeError):
+    pass
 
 
-def save_session_interactively(playwright: Playwright, login_url: str) -> None:
-    """Opens a real, visible browser at `login_url`, waits for the
-    developer to log in manually, then saves the resulting session to
-    STORAGE_STATE_PATH.
+def has_session() -> bool:
+    return _session_state is not None
 
-    "Logged in" is confirmed by the developer themselves (pressing Enter
-    in the terminal) rather than guessed from the URL - same reasoning as
-    salesforce_browser_session.py's identical function: an intermediate
-    redirect hop could briefly look logged-in and save the session too
-    early.
-    """
-    browser = playwright.chromium.launch(headless=False)
-    context = browser.new_context()
-    page = context.new_page()
-    page.goto(login_url)
 
-    print("Log in to Mongoose in the browser window that just opened.")
-    input("Once you're fully logged in and see your normal Mongoose dashboard, press Enter here...")
+def clear_session() -> None:
+    global _session_state
+    _session_state = None
 
-    STORAGE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    context.storage_state(path=str(STORAGE_STATE_PATH))
-    browser.close()
 
-    print(f"Session saved to {STORAGE_STATE_PATH}")
+def set_session_state(state: Optional[dict]) -> None:
+    """Mainly for tests - normal code logs in via log_in_interactively()."""
+    global _session_state
+    _session_state = state
+
+
+def log_in_interactively(
+    playwright: Playwright, logged_in_selector: str, target_url: str = MONGOOSE_URL, headless: bool = False,
+) -> None:
+    """Opens a visible browser at `target_url` and waits (up to 5 minutes)
+    for the professor to log in, i.e. for `logged_in_selector` to appear.
+    Raises RuntimeError if the window is closed first or time runs out.
+    `headless` exists only so tests don't pop up a window."""
+    global _session_state
+    browser = playwright.chromium.launch(headless=headless)
+    try:
+        page = browser.new_context().new_page()
+        page.goto(target_url)
+        page.wait_for_selector(logged_in_selector, state="visible", timeout=LOGIN_TIMEOUT_MS)
+        _session_state = page.context.storage_state()  # a dict, kept in memory only
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Mongoose login wasn't finished within 5 minutes.") from None
+    except PlaywrightError:
+        raise RuntimeError("The Mongoose login window was closed before login finished.") from None
+    finally:
+        try:
+            browser.close()
+        except PlaywrightError:
+            pass  # already closed by the professor
 
 
 def open_authenticated_context(playwright: Playwright, headless: bool = True) -> BrowserContext:
-    """Returns a browser context pre-loaded with the saved session, for
-    anything that needs to navigate authenticated Mongoose pages without
-    logging in again. Raises RuntimeError if no session has been saved
-    yet - callers should catch this and tell the user to run
-    scripts/mongoose_login.py first."""
-    if not has_saved_session():
-        raise RuntimeError(
-            f"No saved Mongoose session at {STORAGE_STATE_PATH}. "
-            f"Run scripts/mongoose_login.py first to log in interactively."
-        )
+    """A new browser context loaded with this app session's Mongoose login.
+    Raises NotLoggedInError if nobody has logged in yet."""
+    if _session_state is None:
+        raise NotLoggedInError(NOT_LOGGED_IN_MESSAGE)
     browser = playwright.chromium.launch(headless=headless)
-    return browser.new_context(storage_state=str(STORAGE_STATE_PATH))
+    return browser.new_context(storage_state=_session_state)

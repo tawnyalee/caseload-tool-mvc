@@ -15,8 +15,8 @@ src/data/saved_batches.json
 # lives in memory only), kept ignored in case an old copy is ever restored.
 data/.salesforce_session.json
 
-# Saved Mongoose browser session (Playwright storage_state) - same
-# sensitivity/reasoning as the Salesforce one above. Never commit.
+# Old saved Mongoose session file - no longer created (in memory only now,
+# same as Salesforce), kept ignored in case an old copy is ever restored.
 data/.mongoose_session.json
 
 # Persisted StudentID -> Mongoose Contact Id map - derived, per-install data.
