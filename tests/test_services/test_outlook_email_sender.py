@@ -181,3 +181,50 @@ def test_stale_connection_reconnects_once(tmp_path):
 
     assert stale.mails == []
     assert [m.To for m in fresh.mails] == ["jane@example.test"]
+
+
+# --- never starts Outlook: attach to an open one or fail clearly ------------
+
+from unittest.mock import patch
+
+from src.services.outlook_email_sender import OUTLOOK_NOT_OPEN_MESSAGE, _connect_to_outlook
+
+
+def test_connects_only_to_an_already_open_outlook_never_starts_one():
+    import win32com.client
+    running = object()
+    with patch.object(win32com.client, "GetActiveObject", return_value=running) as attach, \
+         patch.object(win32com.client, "Dispatch") as start:
+        assert _connect_to_outlook() is running
+    attach.assert_called_once_with("Outlook.Application")
+    start.assert_not_called()  # Dispatch would start a hidden Outlook
+
+
+def test_outlook_not_open_gives_a_plain_message():
+    import win32com.client
+    with patch.object(win32com.client, "GetActiveObject", side_effect=Exception("Operation unavailable")),          patch("src.services.outlook_email_sender._new_outlook_is_running", return_value=False):
+        with pytest.raises(RuntimeError, match="Outlook isn't open"):
+            _connect_to_outlook()
+
+
+def test_new_outlook_open_says_the_app_needs_classic():
+    import win32com.client
+    with patch.object(win32com.client, "GetActiveObject", side_effect=Exception("Operation unavailable")),          patch("src.services.outlook_email_sender._new_outlook_is_running", return_value=True):
+        with pytest.raises(RuntimeError, match=r"New Outlook open, but this app needs Outlook \(classic\)"):
+            _connect_to_outlook()
+
+
+def test_ensure_ready_connects_once_and_reuses_it(tmp_path):
+    outlook = _FakeOutlook()
+    sender = _make_sender(tmp_path, [outlook])  # only one connection available
+    sender.ensure_ready()
+    sender.send("a@example.test", "S", "<p>1</p>")
+    assert [m.To for m in outlook.mails] == ["a@example.test"]
+
+
+def test_ensure_ready_raises_when_outlook_is_not_open(tmp_path):
+    def not_open():
+        raise RuntimeError(OUTLOOK_NOT_OPEN_MESSAGE)
+    sender = OutlookEmailSender(signatures_folder=tmp_path, outlook_factory=not_open)
+    with pytest.raises(RuntimeError, match="Outlook isn't open"):
+        sender.ensure_ready()

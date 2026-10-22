@@ -56,6 +56,9 @@ class RedirectingEmailSender(EmailSender):
         self.inner = inner
         self.redirect_to = redirect_to
 
+    def ensure_ready(self) -> None:
+        self.inner.ensure_ready()
+
     def send(self, to_email: str, subject: str, body: str, signature: str = "") -> None:
         # Same failures as a real send would hit, so test runs report them too.
         if not to_email:

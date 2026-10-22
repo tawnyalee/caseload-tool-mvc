@@ -56,3 +56,11 @@ def test_recipient_address_is_html_escaped_in_the_banner():
     inner = FakeEmailSender()
     RedirectingEmailSender(inner, "me@example.test").send("<b>x</b>@y.test", "S", "")
     assert "&lt;b&gt;x&lt;/b&gt;@y.test" in inner.sent[0]["body"]
+
+
+def test_redirecting_sender_passes_the_readiness_check_through():
+    class NotReady(FakeEmailSender):
+        def ensure_ready(self):
+            raise RuntimeError("Outlook isn't open")
+    with pytest.raises(RuntimeError, match="Outlook isn't open"):
+        RedirectingEmailSender(NotReady(), "me@example.test").ensure_ready()

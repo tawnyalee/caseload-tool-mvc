@@ -17,6 +17,11 @@ class EmailSender(ABC):
         """Sends an email. Raises an exception if sending fails."""
         raise NotImplementedError
 
+    def ensure_ready(self) -> None:
+        """Called once before a run that sends email; raises (with a plain
+        message) if sending can't work at all, e.g. Outlook isn't open, so
+        the run stops before the first student. No-op by default."""
+
 
 class FakeEmailSender(EmailSender):
     """Records every send() call instead of emailing anyone. `fail_for` lets

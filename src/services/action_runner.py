@@ -184,6 +184,8 @@ class ActionRunner:
         if action.filters:
             self.activity_logger.log(f"Filters matched {matched_count} of {len(all_students)} students")
         self.activity_logger.log(f"'{action.name}' is currently running for {len(students)} students")
+        if action.is_email and students:
+            self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         # Only email gets a note: Mongoose writes its own note for every text
         # at the end of the day, so a text-only action never writes one here.
@@ -340,6 +342,8 @@ class ActionRunner:
         if included_student_ids is not None:
             students = [s for s in students if s.salesforce_id in included_student_ids]
         self.activity_logger.log(f"Ad-hoc email is currently running for {len(students)} students")
+        if students:
+            self.email_sender.ensure_ready()
         has_note_content = bool(note_subject or note_body or follow_up_note)
         summary = ActionRunSummary()
 

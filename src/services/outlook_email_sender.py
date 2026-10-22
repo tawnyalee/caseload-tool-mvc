@@ -94,16 +94,49 @@ def embed_local_images(html: str, base_folder: Path) -> Tuple[str, List[Tuple[Pa
     return _IMG_SRC.sub(replace, html), attachments
 
 
+OUTLOOK_NOT_OPEN_MESSAGE = "Outlook isn't open. Open Outlook (classic), let it finish loading, then try again."
+NEW_OUTLOOK_MESSAGE = (
+    "You have the New Outlook open, but this app needs Outlook (classic). Turn off the "
+    "'New Outlook' toggle (top right), or open 'Outlook (classic)' from the Start menu, then try again."
+)
+
+
+def _new_outlook_is_running() -> bool:
+    """The New Outlook (olk.exe) has no automation support at all, and
+    Microsoft auto-migrates people to it - this happened to the developer
+    on 2026-10-22 - so say so specifically instead of "not open"."""
+    import subprocess
+    try:
+        listing = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq olk.exe", "/NH"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout
+    except Exception:
+        return False
+    return "olk.exe" in listing.lower()
+
+
 def _connect_to_outlook():
+    """Attaches to the Outlook that's ALREADY open - never starts one.
+    Dispatch() would start Outlook if it isn't running, but invisibly, with
+    no window: one started that way on 2026-10-20 ran hidden for two days,
+    stopped answering, and stalled the developer's iCloud setup until it was
+    ended in Task Manager. GetActiveObject() only finds a running copy."""
     import win32com.client  # imported here so the rest of the app never needs pywin32 just to start
-    return win32com.client.Dispatch("Outlook.Application")
+    try:
+        return win32com.client.GetActiveObject("Outlook.Application")
+    except Exception:
+        message = NEW_OUTLOOK_MESSAGE if _new_outlook_is_running() else OUTLOOK_NOT_OPEN_MESSAGE
+        raise RuntimeError(message) from None
 
 
 class OutlookEmailSender(EmailSender):
     """`outlook_factory` exists for tests (a fake standing in for Outlook);
     the app uses the default, which connects to the real one. Outlook is
-    only contacted on the first send, never at construction, so the app
-    starts normally even if Outlook isn't set up."""
+    only contacted on the first send (or ensure_ready), never at
+    construction, so the app starts normally even if Outlook isn't open.
+    It is never STARTED by the app - see _connect_to_outlook."""
 
     def __init__(
         self,
@@ -118,6 +151,12 @@ class OutlookEmailSender(EmailSender):
         if self._outlook is None:
             self._outlook = self._outlook_factory()
         return self._outlook
+
+    def ensure_ready(self) -> None:
+        """Checks Outlook is open before a run starts, so a closed Outlook
+        stops the run once with a clear message instead of failing every
+        student. Must run on the same (background) thread as send()."""
+        self._get_outlook()
 
     def _load_signature(self, name: str) -> str:
         if not name:

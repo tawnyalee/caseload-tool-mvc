@@ -54,8 +54,8 @@ def check_pywin32():
 
 def connect_to_outlook(win32com_client):
     section("2. Outlook Classic automation")
-    print("Connecting... (this starts Outlook if it isn't already open)")
-    # Dispatch() can block forever with no error if Outlook opens a window
+    print("Connecting to the Outlook that's already open...")
+    # Connecting can block forever with no error if Outlook has a window open
     # that needs a human - e.g. the first-run "Welcome to Microsoft Outlook"
     # setup on a machine where Outlook is installed but never set up (this
     # actually happened on the dev machine). It can't be timed out safely,
@@ -69,12 +69,16 @@ def connect_to_outlook(win32com_client):
     hint.daemon = True
     hint.start()
     try:
-        outlook = win32com_client.Dispatch("Outlook.Application")
+        # GetActiveObject, not Dispatch: Dispatch would START Outlook if it
+        # isn't open - invisibly, with no window (this happened once and
+        # left a hidden Outlook running for two days).
+        outlook = win32com_client.GetActiveObject("Outlook.Application")
         namespace = outlook.GetNamespace("MAPI")
     except Exception as exc:
         hint.cancel()
         print(f"FAILED to connect: {exc}")
-        print("Likely causes: Outlook Classic isn't installed (the 'New Outlook'")
+        print("First: is Outlook open? Open it, let it finish loading, then rerun this.")
+        print("Other causes: Outlook Classic isn't installed (the 'New Outlook'")
         print("has no automation support), or IT has blocked automation.")
         print("If you're on New Outlook, check for a 'New Outlook' toggle at the")
         print("top right of Outlook and switch it off, then rerun.")

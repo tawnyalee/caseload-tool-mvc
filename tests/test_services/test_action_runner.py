@@ -1,3 +1,5 @@
+import pytest
+
 from src.models.action import Action
 from src.models.email_template import EmailTemplate
 from src.models.group import Group
@@ -789,3 +791,42 @@ def test_batch_labels_progress_with_the_item_and_stops_across_items(tmp_path):
     assert len(email_sender.sent) == 1
     second_item = batch.items[1].summary
     assert [r.step_type for r in second_item.results] == ["stopped"] * 3
+
+
+# --- ensure_ready: stop before the first student if email can't work -------
+
+class _NotReadyEmailSender(FakeEmailSender):
+    def ensure_ready(self):
+        raise RuntimeError("Outlook isn't open. Open Outlook, let it finish loading, then try again.")
+
+
+def _runner_with(tmp_path, email_sender):
+    runner, template, *_ = _make_runner(tmp_path, _make_students())
+    runner.email_sender = email_sender
+    return runner, template
+
+
+def test_email_run_stops_before_any_student_when_outlook_is_not_open(tmp_path):
+    sender = _NotReadyEmailSender()
+    runner, template = _runner_with(tmp_path, sender)
+    with pytest.raises(RuntimeError, match="Outlook isn't open"):
+        runner.run(_make_action(template.id), group_name="G")
+    assert sender.sent == []
+
+
+def test_ad_hoc_email_stops_before_any_student_when_outlook_is_not_open(tmp_path):
+    runner, _ = _runner_with(tmp_path, _NotReadyEmailSender())
+    with pytest.raises(RuntimeError, match="Outlook isn't open"):
+        runner.send_ad_hoc_email("Hi", "<p>x</p>")
+
+
+def test_text_only_run_does_not_need_outlook(tmp_path):
+    runner, template = _runner_with(tmp_path, _NotReadyEmailSender())
+    summary = runner.run(_make_action(template.id, is_email=False, is_text=True, has_note=False), group_name="G")
+    assert [r.step_type for r in summary.results] == ["text"] * 3
+
+
+def test_batch_reports_outlook_not_open_per_action_instead_of_crashing(tmp_path):
+    runner, template = _runner_with(tmp_path, _NotReadyEmailSender())
+    batch = runner.run_batch([(_make_action(template.id), "D424")])
+    assert "Outlook isn't open" in batch.items[0].error
