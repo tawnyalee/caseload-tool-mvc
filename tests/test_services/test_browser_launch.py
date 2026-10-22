@@ -15,7 +15,7 @@ def test_launches_the_installed_edge():
 
 def test_missing_edge_gives_a_plain_message():
     playwright = MagicMock()
-    playwright.chromium.launch.side_effect = PlaywrightError('Chromium distribution \'msedge\' is not found at C:\...')
+    playwright.chromium.launch.side_effect = PlaywrightError("Chromium distribution 'msedge' is not found")
     with pytest.raises(RuntimeError, match="Microsoft Edge couldn't be started"):
         launch_browser(playwright)
 
