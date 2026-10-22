@@ -35,6 +35,7 @@ from src.views.review_send_modal import ReviewSendModal
 from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
 from src.views.run_summary_modal import RunSummaryModal
 from src.views.run_progress_modal import RunProgressModal
+from src.views.help_view import HelpView
 from src.services.run_report import batch_issue_lines, issue_lines
 
 
@@ -578,10 +579,7 @@ class AppController:
         )
 
     def handle_help_requested(self) -> None:
-        self.switch_workspace_view(
-            PlaceholderView,
-            message="❓ Help & Documentation\n\n[User Guides & Support - Logic Coming Soon]"
-        )
+        self.switch_workspace_view(HelpView)  # the professor guide - see help_view.py
 
     def handle_run_action(self, action_name: str) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():

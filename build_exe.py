@@ -25,6 +25,8 @@ from pathlib import Path
 
 import PyInstaller.__main__
 
+from src.services.guide_markdown import to_html_document
+
 ROOT = Path(__file__).resolve().parent
 APP_NAME = "CaseloadTool"
 
@@ -42,6 +44,7 @@ def main() -> None:
         "--noconfirm",
         # Read-only files the app ships with (found via app_paths.resource_path).
         "--add-data", f"{ROOT / 'src' / 'assets' / 'quill'};src/assets/quill",
+        "--add-data", f"{ROOT / 'docs' / 'professor_guide.md'};docs",  # the in-app Help screen
         # CustomTkinter's themes/fonts and the time-zone database are data
         # files, not code - make sure they're included.
         "--collect-data", "customtkinter",
@@ -58,7 +61,15 @@ def main() -> None:
         "--workpath", str(ROOT / "build"),
         "--specpath", str(ROOT / "build"),
     ])
+
+    # The printable handout, next to the .exe where professors will see it
+    # (same source as the in-app Help screen - see guide_markdown.py).
+    guide = (ROOT / "docs" / "professor_guide.md").read_text(encoding="utf-8")
+    handout = ROOT / "dist" / APP_NAME / "Professor Guide.html"
+    handout.write_text(to_html_document(guide), encoding="utf-8")
+
     print(f"\nBuilt: {ROOT / 'dist' / APP_NAME / (APP_NAME + '.exe')}")
+    print(f"Guide: {handout}")
 
 
 if __name__ == "__main__":
