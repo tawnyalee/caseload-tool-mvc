@@ -1,6 +1,6 @@
 import pytest
 
-from src.services.text_sender import FakeTextSender
+from src.services.text_sender import FakeTextSender, UnavailableTextSender
 
 
 def test_fake_text_sender_records_sent_text():
@@ -18,3 +18,8 @@ def test_fake_text_sender_raises_for_configured_failure():
         sender.send(to_phone="555-0102", subject="Hi", body="body")
 
     assert sender.sent == []
+
+
+def test_unavailable_text_sender_always_fails_with_a_plain_reason():
+    with pytest.raises(RuntimeError, match="Texting isn't set up in this app yet - no text was sent."):
+        UnavailableTextSender().send("555-0001", "Hi", "Welcome")

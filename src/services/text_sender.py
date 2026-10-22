@@ -1,6 +1,7 @@
 # src/services/text_sender.py
 """Abstract text delivery, plus a local fake that records what would have
-been sent. The real adapter (Cadence) implements this same interface later.
+been sent (for tests), and the placeholder the app uses until the real
+Mongoose adapter exists. The real adapter implements this same interface.
 """
 from abc import ABC, abstractmethod
 from typing import List, Optional, Set
@@ -25,3 +26,15 @@ class FakeTextSender(TextSender):
         if to_phone in self.fail_for:
             raise RuntimeError(f"Simulated text failure for {to_phone}")
         self.sent.append({"to": to_phone, "subject": subject, "body": body})
+
+
+class UnavailableTextSender(TextSender):
+    """What the app uses until real Mongoose texting is built. Every send
+    fails with a plain explanation, so a run with "Send Text" checked shows
+    each text as failed in the results window - instead of FakeTextSender's
+    quiet "success" for a text that never went out."""
+
+    MESSAGE = "Texting isn't set up in this app yet - no text was sent."
+
+    def send(self, to_phone: str, subject: str, body: str) -> None:
+        raise RuntimeError(self.MESSAGE)

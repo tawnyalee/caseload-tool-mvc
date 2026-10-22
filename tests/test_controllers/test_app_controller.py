@@ -30,6 +30,7 @@ from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SE
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services.test_mode import RedirectingEmailSender
+from src.services.text_sender import UnavailableTextSender
 
 
 def test_handle_add_action_clicked_reads_nav_panel_group():
@@ -627,6 +628,8 @@ def test_without_test_mode_file_email_is_real_outlook_and_notes_are_real(mock_ct
     assert isinstance(controller.email_sender, OutlookEmailSender)
     assert isinstance(controller.note_writer, PlaywrightNoteWriter)
     assert controller.action_runner.email_sender is controller.email_sender
+    # Never the fake that reports texts as sent - see UnavailableTextSender.
+    assert isinstance(controller.text_sender, UnavailableTextSender)
 
 
 @patch.object(AppController, "_refresh_caseload_at_startup")
