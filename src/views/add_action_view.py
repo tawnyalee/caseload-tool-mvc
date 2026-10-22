@@ -711,7 +711,7 @@ class AddActionView(ctk.CTkFrame):
         lbl = ctk.CTkLabel(self.text_container, text="💬 Text Details:", font=ctk.CTkFont(weight="bold"))
         lbl.pack(anchor="w", padx=10, pady=5)
 
-        lbl = ctk.CTkLabel(self.text_container, text="Enter Text pySubject (required for Cadence Scheduling):")
+        lbl = ctk.CTkLabel(self.text_container, text="Enter Text Subject (required for Cadence Scheduling):")
         lbl.pack(anchor="w", padx=10, pady=5)
 
         self.text_subject = ctk.CTkEntry(self.text_container, placeholder_text="Text Subject", width=320)
