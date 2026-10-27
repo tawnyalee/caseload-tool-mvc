@@ -72,26 +72,27 @@ An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add 
 
 ### Recipe: email students who just passed a task
 
-For a daily "next task" email that also catches weekend passes and never repeats:
+Once a course's **task emails** are set up in **⚙ Settings → Courses**, one Action per course handles every task — each student gets the email for the task they just passed:
 
-1. Put the Action in the course's group (for example **D424**).
+1. Create an Action in the course's group (for example **D424**), check **Send Email**, then check **Use this course's task emails**.
 2. Add these filter rules:
    - **latest_task_status** → **IsOneOf** → **Passed**
    - **latest_task_date** → **WithinLastDays** → **3** (today and the 3 days before, so a Monday run catches Friday and the weekend)
-   - **latest_task_number** → **Equals** → the task they just passed, e.g. **2**
-   - **course_followup_note** → **DoesNotContain** → a phrase only this email uses, e.g. **Task 3 tips sent**
-3. In **Note Details**, set the **follow-up note** to that same phrase (**Task 3 tips sent**), so tomorrow's run skips anyone who already got it.
-4. Repeat for each task, then save them all as one **Saved Batch** and run it each morning.
+   - **course_followup_note** → **DoesNotContain** → **{{last_passed_task}} tips sent**
+3. In **Note Details**, set the **follow-up note** to **{{last_passed_task}} tips sent**. It fills in per student (for example "Task 3 tips sent"), so tomorrow's run skips anyone who already got that task's email — and includes them again once they pass the next task.
+4. Do the same for each course, save them as one **Saved Batch**, and run it each morning.
+
+A task email only goes to a student whose latest task **passed**. Anyone who can't get one — no email set up for their task, or their latest task came back for revisions — is listed in the results with the reason.
 
 ### Personalizing emails
 
-Use **Insert Field** while writing a subject or body to add details that fill in for each student:
+Use **Insert Field** while writing an email subject or body to add details that fill in for each student. You can also type them (with the double braces, e.g. **{{last_passed_task}}**) into task-email subjects in Settings and into **Note Details** — the note subject, body, and follow-up note:
 
-- **Student Name**
-- **Course Code**
-- **Last Submitted Task**
-- **Last Passed Task** — blank unless the student's most recent submission passed
-- **Next Task**
+- **Student Name** — `{{student_name}}`
+- **Course Code** — `{{course_code}}`
+- **Last Submitted Task** — `{{last_submitted_task}}`
+- **Last Passed Task** — `{{last_passed_task}}` (blank unless the student's most recent submission passed)
+- **Next Task** — `{{next_task}}`
 
 ## Sending
 

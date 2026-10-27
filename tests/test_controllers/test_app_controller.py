@@ -921,3 +921,21 @@ def test_saving_course_settings_updates_groups_by_id_and_persists(mock_showinfo)
     assert (d424.is_course, d424.course_code, d424.task_count, d424.has_objective_assessment) == (True, "D424", 5, True)
     assert other.is_course is False
     controller.group_repo.save_groups.assert_called_once_with(controller.groups)
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.ReviewSendModal")
+def test_task_email_actions_review_only_the_student_list(mock_modal, mock_showinfo):
+    controller = _runs_synchronously(MagicMock())
+    action = Action(name="Next task", group_id="G1", is_email=True, use_task_emails=True, template_id="T1")
+    controller.scenarios_raw = {"Next task": action}
+    controller.action_runner.get_matching_students.return_value = ["s1"]
+    controller.action_runner.run.return_value = ActionRunSummary()
+
+    AppController.handle_run_action.__get__(controller, AppController)("Next task")
+    _, kwargs = mock_modal.call_args
+    assert kwargs["is_email"] is False  # nothing to edit - each student's email differs
+    kwargs["on_confirm"]({"SF1"}, "ignored", "ignored")
+
+    _, run_kwargs = controller.action_runner.run.call_args
+    assert run_kwargs["email_subject_override"] is None and run_kwargs["email_body_override"] is None

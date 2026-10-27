@@ -210,3 +210,11 @@ def test_passed_recently_and_not_yet_emailed_rule_end_to_end():
     assert matches_student(_student(latest_task_status="Revisions Needed", latest_task_date=_days_ago(1)), rules) is False
     assert matches_student(_student(latest_task_status="Passed", latest_task_date=_days_ago(1),
                                     course_followup_note="Task 3 tips sent"), rules) is False
+
+
+def test_does_not_contain_with_a_merge_field_checks_each_students_own_task():
+    rule = [{"field": "course_followup_note", "operator": "DoesNotContain", "value": "{{last_passed_task}} tips sent"}]
+    already = _student(latest_task_number=3, latest_task_status="Passed", course_followup_note="Task 3 tips sent")
+    moved_on = _student(latest_task_number=4, latest_task_status="Passed", course_followup_note="Task 3 tips sent")
+    assert matches_student(already, rule) is False   # already got the Task 3 email
+    assert matches_student(moved_on, rule) is True   # passed Task 4 since - send the next one

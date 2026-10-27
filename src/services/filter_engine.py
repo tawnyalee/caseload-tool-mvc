@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from src.models.student import Student
 from src.services.filterable_fields import FILTERABLE_FIELDS, FieldKind, Operator
+from src.services.merge_fields import render_merge_fields
 
 _VALID_OPERATOR_VALUES = {field.name: {op.value for op in field.operators} for field in FILTERABLE_FIELDS.values()}
 
@@ -51,6 +52,10 @@ def _matches_condition(student: Student, condition: Dict[str, Any]) -> bool:
 
     if operator == Operator.IS_EMPTY.value:
         return is_blank
+    if operator in (Operator.CONTAINS.value, Operator.DOES_NOT_CONTAIN.value) and "{{" in str(condition.get("value", "")):
+        # Per-student value, e.g. "doesn't contain {{last_passed_task}} tips
+        # sent" -> "Task 3 tips sent" for a student who just passed Task 3.
+        condition = {**condition, "value": render_merge_fields(str(condition["value"]), student)}
     if operator == Operator.DOES_NOT_CONTAIN.value:
         # A blank field doesn't contain anything, so it matches - e.g. "follow-up
         # note doesn't contain 'Task 3 tips sent'" must include students with

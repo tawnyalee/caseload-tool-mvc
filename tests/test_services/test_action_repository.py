@@ -60,3 +60,10 @@ def test_delete_action(temp_action_repo: ActionRepository):
     loaded_actions = temp_action_repo.load_actions()
     assert len(loaded_actions) == 1
     assert loaded_actions[0].id == action2.id
+
+def test_use_task_emails_is_saved_and_loaded(tmp_path):
+    from src.models.action import Action as _Action
+    from src.services.action_repository import ActionRepository as _Repo
+    repo = _Repo(data_file=tmp_path / "actions.json")
+    repo.save_action(_Action(name="Next task", use_task_emails=True))
+    assert repo.load_actions()[0].use_task_emails is True

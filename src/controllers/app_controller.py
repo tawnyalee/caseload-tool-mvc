@@ -615,8 +615,11 @@ class AppController:
             active_group = self.nav_panel.group_dropdown.get()
 
         matches = self.action_runner.get_matching_students(action)
+        # Course task emails differ per student, so there's no single
+        # subject/body to review or edit - the dialog just lists students.
+        editable_email = action.is_email and not getattr(action, "use_task_emails", False)
         template_body = ""
-        if action.is_email and action.template_id:
+        if editable_email and action.template_id:
             template = self.template_repo.get_by_id(action.template_id)
             template_body = template.body if template else ""
 
@@ -625,8 +628,8 @@ class AppController:
                 f"Running '{action_name}'",
                 lambda control: self.action_runner.run(
                     action, group_name=active_group, included_student_ids=selected_ids,
-                    email_subject_override=reviewed_subject if action.is_email else None,
-                    email_body_override=reviewed_body if action.is_email else None,
+                    email_subject_override=reviewed_subject if editable_email else None,
+                    email_body_override=reviewed_body if editable_email else None,
                     control=control,
                 ),
                 on_finished=_show_results,
@@ -649,7 +652,7 @@ class AppController:
             master=self.right_workspace.winfo_toplevel(),
             title=f"Run '{action_name}'",
             students=matches,
-            is_email=action.is_email,
+            is_email=editable_email,
             initial_subject=action.email_subject,
             initial_body=template_body,
             on_confirm=_on_confirm,
@@ -984,6 +987,7 @@ class AppController:
             note_subject=action_data.get("note_subject", ""),
             note_body=action_data.get("note_body", ""),
             follow_up_note=action_data.get("follow_up_note", ""),
+            use_task_emails=action_data.get("use_task_emails", False),
             interaction_type=(
                 InteractionType(action_data.get("interaction_type"))
                 if action_data.get("interaction_type")

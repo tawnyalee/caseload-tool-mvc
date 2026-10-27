@@ -20,6 +20,7 @@ class Action:
         follow_up_note: str = "",
         interaction_type: Optional[InteractionType] = None,
         action_id: Optional[str] = None,
+        use_task_emails: bool = False,
     ):
         self.id = action_id if action_id is not None else str(uuid.uuid4())
         self.name = name
@@ -36,6 +37,10 @@ class Action:
         self.note_body = note_body
         self.follow_up_note = follow_up_note
         self.interaction_type = interaction_type
+        # Instead of one template/subject, each student gets the email set up
+        # in Settings for the task they just passed in this action's course
+        # (Group.task_email_for). Added 2026-10-27.
+        self.use_task_emails = use_task_emails
 
     @property
     def has_email(self) -> bool:

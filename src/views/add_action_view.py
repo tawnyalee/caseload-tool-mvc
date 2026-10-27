@@ -322,6 +322,9 @@ class AddActionView(ctk.CTkFrame):
             self.send_email_var.set("off")
             self._toggle_email_section()
 
+        self.use_task_emails_var.set("on" if data.get("use_task_emails") else "off")
+        self._update_task_email_state()
+
         # 6. Text Channel Setup & Auto-Expand
         text_config = data.get("text_config") or {
             "subject": data.get("text_subject", ""),
@@ -464,6 +467,7 @@ class AddActionView(ctk.CTkFrame):
             "email_subject": self.email_subject.get(),
             "template_id": self.template_map.get(self.email_body_dropdown.get()),
             "email_signature": self.email_signature_dropdown.get(),
+            "use_task_emails": self.use_task_emails_var.get() == "on",
             "text_subject": self.text_subject.get(),
             "text_body": self.text_body.get("0.0", "end-1c"),  # "0.0" starting index for CustomTkinter
             "note_subject": self.note_subject.get(),
@@ -662,6 +666,23 @@ class AddActionView(ctk.CTkFrame):
             command=self._on_welcome_checkbox_toggled
         )
         self.chk_welcome_email.pack(anchor="w", padx=10, pady=(5, 10))
+
+        self.use_task_emails_var = ctk.StringVar(value="off")
+        self.chk_task_emails = ctk.CTkCheckBox(
+            self.email_container,
+            text="Use this course's task emails (set up in ⚙ Settings)",
+            variable=self.use_task_emails_var,
+            onvalue="on",
+            offvalue="off",
+            command=self._update_task_email_state,
+        )
+        self.chk_task_emails.pack(anchor="w", padx=10, pady=(0, 2))
+        self.task_emails_hint = ctk.CTkLabel(
+            self.email_container,
+            text="Each student gets the email for the task they just passed. This Action's group must be a "
+                 "course with task emails set up in ⚙ Settings. You can still create templates below.",
+            text_color=("gray40", "gray60"), wraplength=420, justify="left",
+        )
         
         lbl = ctk.CTkLabel(self.email_container, text="Subject Line:")
         lbl.pack(anchor="w", padx=10, pady=5)
@@ -706,6 +727,20 @@ class AddActionView(ctk.CTkFrame):
             width=220
         )
         self.email_signature_dropdown.pack(anchor="w", padx=10, pady=(2, 10))
+
+    def _update_task_email_state(self):
+        """With course task emails on, the single subject/template aren't used
+        (each student's email comes from Settings), so they're greyed out.
+        Template New/Edit stay usable - that's where task-email templates
+        are created."""
+        on = self.use_task_emails_var.get() == "on"
+        state = "disabled" if on else "normal"
+        for widget in (self.email_subject, self.subject_merge_field_menu, self.email_body_dropdown):
+            widget.configure(state=state)
+        if on:
+            self.task_emails_hint.pack(anchor="w", padx=30, pady=(0, 8), after=self.chk_task_emails)
+        else:
+            self.task_emails_hint.pack_forget()
 
     def _build_text_ui(self):
         lbl = ctk.CTkLabel(self.text_container, text="💬 Text Details:", font=ctk.CTkFont(weight="bold"))

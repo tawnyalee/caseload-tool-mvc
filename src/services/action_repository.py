@@ -43,6 +43,7 @@ class ActionRepository:
                         note_subject=item.get("note_subject", ""),
                         note_body=item.get("note_body", ""),
                         follow_up_note=item.get("follow_up_note", ""),
+                        use_task_emails=item.get("use_task_emails", False),
                         interaction_type=(
                             InteractionType(item["interaction_type"])
                             if item.get("interaction_type")
@@ -87,6 +88,7 @@ class ActionRepository:
                 "note_subject": a.note_subject,
                 "note_body": a.note_body,
                 "follow_up_note": a.follow_up_note,
+                "use_task_emails": a.use_task_emails,
                 "interaction_type": (
                     a.interaction_type.value if a.interaction_type else None
                 ),
@@ -126,6 +128,7 @@ class ActionRepository:
                 "note_subject": a.note_subject,
                 "note_body": a.note_body,
                 "follow_up_note": a.follow_up_note,
+                "use_task_emails": a.use_task_emails,
                 "interaction_type": (
                     a.interaction_type.value if a.interaction_type else None
                 ),

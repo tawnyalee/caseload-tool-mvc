@@ -904,3 +904,111 @@ def test_note_is_labeled_with_the_course_groups_code(tmp_path):
     runner.run(_make_action(template.id), group_name="Capstone")
 
     assert "course_code='D424'" in "\n".join(received)
+
+
+# --- Course task emails (Settings) ----------------------------------------------
+
+def _task_course(tmp_path, runner):
+    """D424 with 4 tasks; emails set up after Task 1 and Task 2 only."""
+    t2 = EmailTemplate(name="Task 2 tips", body="<p>Here's how to start Task 2.</p>")
+    t3 = EmailTemplate(name="Task 3 tips", body="<p>Here's how to start Task 3.</p>")
+    runner.template_repo.save(t2)
+    runner.template_repo.save(t3)
+    group = Group(name="D424", group_id="G1", is_course=True, course_code="D424", has_tasks=True, task_count=4,
+                  task_emails={"1": {"template_id": t2.id, "subject": "On to Task 2"},
+                               "2": {"template_id": t3.id, "subject": "Nice work on {{last_passed_task}}!"}})
+    runner.group_lookup = {"G1": group}.get
+    return group
+
+
+def _passed(student, task, status="Passed"):
+    student.course_code = "D424"
+    student.latest_task_number = task
+    student.latest_task_status = status
+    return student
+
+
+def test_each_student_gets_the_email_for_the_task_they_just_passed(tmp_path):
+    jane, john, amy = _make_students()
+    _passed(jane, 1); _passed(john, 2); _passed(amy, 2)
+    runner, template, email_sender, *_ = _make_runner(tmp_path, [jane, john, amy])
+    _task_course(tmp_path, runner)
+    action = _make_action(template.id, is_text=False, has_note=False)
+    action.use_task_emails = True
+
+    runner.run(action, group_name="D424")
+
+    sent = {s["to"]: s for s in email_sender.sent}
+    assert sent["jane@example.test"]["subject"] == "On to Task 2"
+    assert "start Task 2" in sent["jane@example.test"]["body"]
+    assert sent["john@example.test"]["subject"] == "Nice work on Task 2!"   # merge field filled in
+    assert "start Task 3" in sent["john@example.test"]["body"]
+
+
+def test_task_emails_are_never_sent_unless_the_latest_task_passed(tmp_path):
+    jane = _passed(_make_students()[0], 1, status="Revisions Needed")
+    runner, template, email_sender, *_ = _make_runner(tmp_path, [jane])
+    _task_course(tmp_path, runner)
+    action = _make_action(template.id, is_text=False, has_note=False)
+    action.use_task_emails = True
+
+    summary = runner.run(action, group_name="D424")
+
+    assert email_sender.sent == []
+    assert summary.results[0].outcome == "skipped"
+    assert "hasn't passed (status: Revisions Needed)" in summary.results[0].detail
+
+
+def test_a_task_with_no_email_set_up_is_skipped_and_explained(tmp_path):
+    jane = _passed(_make_students()[0], 3)   # only Task 1 and 2 have emails
+    runner, template, email_sender, *_ = _make_runner(tmp_path, [jane])
+    _task_course(tmp_path, runner)
+    action = _make_action(template.id, is_text=False)
+    action.use_task_emails = True
+
+    summary = runner.run(action, group_name="D424")
+
+    assert email_sender.sent == []
+    email_step = next(r for r in summary.results if r.step_type == "email")
+    assert email_step.outcome == "skipped"
+    assert email_step.detail == "No task email set up for D424 Task 3 (see Settings)"
+    assert any(r.step_type == "note" and r.outcome == "skipped" for r in summary.results)
+
+
+def test_task_emails_need_the_action_to_be_in_a_course_group(tmp_path):
+    jane = _passed(_make_students()[0], 1)
+    runner, template, email_sender, *_ = _make_runner(tmp_path, [jane])
+    runner.group_lookup = {"G1": Group(name="Reminders", group_id="G1")}.get
+    action = _make_action(template.id, is_text=False, has_note=False)
+    action.use_task_emails = True
+
+    summary = runner.run(action, group_name="Reminders")
+
+    assert email_sender.sent == []
+    assert "group isn't a course" in summary.results[0].detail
+
+
+def test_a_deleted_task_template_fails_that_student_clearly(tmp_path):
+    jane = _passed(_make_students()[0], 1)
+    runner, template, email_sender, *_ = _make_runner(tmp_path, [jane])
+    group = _task_course(tmp_path, runner)
+    runner.template_repo.delete(group.task_emails["1"]["template_id"])
+    action = _make_action(template.id, is_text=False, has_note=False)
+    action.use_task_emails = True
+
+    summary = runner.run(action, group_name="D424")
+
+    assert summary.results[0].outcome == "failed"
+    assert "no longer exists" in summary.results[0].detail
+
+
+def test_merge_fields_are_filled_in_notes_and_follow_up_notes(tmp_path):
+    jane = _passed(_make_students()[0], 2)
+    runner, template, _, _, note_writer = _make_runner(tmp_path, [jane])
+    action = _make_action(template.id, is_text=False, follow_up_note="{{last_passed_task}} tips sent")
+    action.note_subject = "Congrats on {{last_passed_task}}"
+
+    runner.run(action, group_name="General")
+
+    assert note_writer.written[0]["subject"] == "Congrats on Task 2"
+    assert note_writer.follow_up_notes["SF1"] == "Task 2 tips sent"

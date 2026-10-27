@@ -330,3 +330,19 @@ def test_editing_an_action_repopulates_a_days_filter_and_does_not_contain(ctk_ro
         action_data={"group_name": "Group A", "filters": filters},
     )
     assert view.get_action_data()["filters"] == filters
+
+
+def test_task_emails_checkbox_greys_out_the_single_template_and_round_trips(ctk_root):
+    view = AddActionView(
+        master=ctk_root, controller=MockController(), groups=["Group A"],
+        action_data={"group_name": "Group A", "is_email": True, "use_task_emails": True},
+    )
+    assert view.use_task_emails_var.get() == "on"
+    assert view.email_subject.cget("state") == "disabled"
+    assert view.email_body_dropdown.cget("state") == "disabled"
+    assert view.btn_new_template.cget("state") == "normal"  # still make templates for Settings
+    assert view.get_action_data()["use_task_emails"] is True
+
+    view.use_task_emails_var.set("off"); view._update_task_email_state()
+    assert view.email_subject.cget("state") == "normal"
+    assert view.get_action_data()["use_task_emails"] is False

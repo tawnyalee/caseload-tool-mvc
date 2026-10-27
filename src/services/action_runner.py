@@ -36,6 +36,7 @@ from src.services.note_records import NoteInsertRecord, resolve_course_code, val
 from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
+from src.services.task_utils import is_latest_task_passed
 from src.services.text_sender import TextSender
 
 
@@ -429,9 +430,43 @@ class ActionRunner:
         action.email_subject / the template's body for this call only - how
         the pre-send review dialog's last-minute edits take effect, without
         touching the saved Action or template."""
+        if action.use_task_emails:
+            return self._attempt_task_email(student, action)
         subject = subject_override if subject_override is not None else action.email_subject
         body = body_override if body_override is not None else (template.body if template else "")
         return self._send_email(student, subject, body, action.email_signature)
+
+    def _attempt_task_email(self, student: Student, action: Action) -> StepResult:
+        """The email set up in Settings for the task this student just passed,
+        in this action's course. Skipped (with the reason, so it shows in the
+        results) when there's nothing safe to send."""
+        group = self.group_lookup(action.group_id) if self.group_lookup and action.group_id else None
+        task = student.latest_task_number
+
+        def skip(detail: str) -> StepResult:
+            self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {detail}")
+            return StepResult(student=student, step_type="email", outcome="skipped", detail=detail)
+
+        if group is None or not group.is_course:
+            return skip("This Action uses course task emails, but its group isn't a course (see Settings)")
+        if task is None:
+            return skip("No task submitted yet")
+        if not is_latest_task_passed(student):
+            # Guard even if a filter was forgotten: never send "on to the next
+            # task" to someone whose latest task came back for revisions.
+            status = student.latest_task_status.strip() or "unknown"
+            return skip(f"Latest task (Task {task}) hasn't passed (status: {status})")
+        email = group.task_email_for(task)
+        if email is None:
+            return skip(f"No task email set up for {group.course_code} Task {task} (see Settings)")
+        template = self.template_repo.get_by_id(email["template_id"])
+        if template is None:
+            self.activity_logger.log(f"[EMAIL FAILED] {student.full_name}: task email template is missing")
+            return StepResult(
+                student=student, step_type="email", outcome="failed",
+                detail=f"The template chosen for {group.course_code} Task {task} no longer exists (see Settings)",
+            )
+        return self._send_email(student, email.get("subject", ""), template.body, action.email_signature)
 
     def _send_email(self, student: Student, subject: str, body: str, signature: str) -> StepResult:
         try:
@@ -463,6 +498,11 @@ class ActionRunner:
         follow_up_note: str,
         course_code: str = "",
     ) -> StepResult:
+        # Merge fields work in notes too (2026-10-27), e.g. a follow-up note of
+        # "{{last_passed_task}} tips sent" that a DoesNotContain filter checks.
+        note_subject = render_merge_fields(note_subject, student)
+        note_body = render_merge_fields(note_body, student)
+        follow_up_note = render_merge_fields(follow_up_note, student)
         record = NoteInsertRecord(
             salesforce_id=student.salesforce_id,
             # The action's course group's code; otherwise the student's own.
