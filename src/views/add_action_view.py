@@ -521,18 +521,26 @@ class AddActionView(ctk.CTkFrame):
     def _get_live_field_values(self, field_name):
         """Returns the sorted, deduplicated, non-blank values currently
         present in the roster for `field_name` - what a SET_VALUE_LIVE
-        filter field's multi-select options are built from."""
+        filter field's multi-select options are built from. Course codes
+        also include every course configured in Settings, so that dropdown
+        works before the roster loads (first session, or not logged in)."""
+        values = set()
+        if field_name == "course_code":
+            values |= {
+                g.scoped_course_code for g in self.groups
+                if getattr(g, "scoped_course_code", "")  # Group objects; tests may pass plain names
+            }
         if self.student_data_provider is None:
-            return []
+            return sorted(values)
         try:
             students = self.student_data_provider.get_students()
         except Exception:
-            # Roster not loaded (e.g. not logged in to Salesforce): the
-            # dropdown just has no suggestions - editing the action must
-            # still work. Before 2026-10-22 this silently blocked opening
-            # the editor for any action with such a filter.
-            return []
-        values = {
+            # Roster not loaded (e.g. not logged in to Salesforce): only the
+            # configured courses - editing the action must still work. Before
+            # 2026-10-22 this silently blocked opening the editor for any
+            # action with such a filter.
+            return sorted(values)
+        values |= {
             getattr(student, field_name, "").strip()
             for student in students
             if getattr(student, field_name, "").strip()

@@ -346,3 +346,22 @@ def test_task_emails_checkbox_greys_out_the_single_template_and_round_trips(ctk_
     view.use_task_emails_var.set("off"); view._update_task_email_state()
     assert view.email_subject.cget("state") == "normal"
     assert view.get_action_data()["use_task_emails"] is False
+
+
+def test_course_code_choices_include_settings_courses_even_without_a_roster(ctk_root):
+    groups = [
+        Group(name="D424", group_id="G1", is_course=True, course_code="D424"),
+        Group(name="Capstone", group_id="G2", is_course=True, course_code="C769"),
+        Group(name="Reminders", group_id="G3"),  # not a course - no code
+    ]
+    view = AddActionView(master=ctk_root, controller=MockControllerWithStudents(_NotLoggedInProvider()), groups=groups)
+    assert view._get_live_field_values("course_code") == ["C769", "D424"]
+    assert view._get_live_field_values("course_status") == []  # other fields still roster-only
+
+
+def test_course_code_choices_combine_settings_courses_with_the_roster(ctk_root, tmp_path):
+    fixture = tmp_path / "fake_students.json"
+    fixture.write_text('[{"salesforce_id": "1", "first_name": "A", "last_name": "B", "email": "a@x.test", "course_code": "E210"}]', encoding="utf-8")
+    groups = [Group(name="D424", group_id="G1", is_course=True, course_code="D424")]
+    view = AddActionView(master=ctk_root, controller=MockControllerWithStudents(FakeStudentDataProvider(file_path=str(fixture))), groups=groups)
+    assert view._get_live_field_values("course_code") == ["D424", "E210"]
