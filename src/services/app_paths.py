@@ -136,3 +136,34 @@ def migrate_legacy_data(legacy_root: Path = _SOURCE_ROOT) -> List[str]:
             shutil.copy2(old, new)
             copied.append(name)
     return copied
+
+
+# Files a "with my data" build carries in a starter_data folder next to the
+# .exe (python build_exe.py --with-my-data). Setup and the test-mode switch
+# only - never logs or derived data.
+STARTER_DATA_FOLDER = "starter_data"
+STARTER_FILES = ("groups.json", "actions.json", "templates.json", "saved_batches.json", "test_mode.json")
+
+
+def install_starter_data(starter_folder: Path = None) -> List[str]:
+    """First launch of a "with my data" build on a new computer: copies the
+    bundled starter_data files into data_dir(), only those not there yet -
+    so it never overwrites what's already on this computer. Lets moving to
+    another machine be "copy one zip, extract, run" (developer's ask,
+    2026-10-27) instead of finding the hidden AppData folder by hand.
+    test_mode.json comes along, so a fresh install starts in test mode
+    instead of live. Returns the names copied."""
+    if starter_folder is None:
+        if not getattr(sys, "frozen", False):
+            return []
+        starter_folder = Path(sys.executable).parent / STARTER_DATA_FOLDER
+    starter_folder = Path(starter_folder)
+    if not starter_folder.is_dir():
+        return []
+    copied = []
+    for name in STARTER_FILES:
+        source, target = starter_folder / name, data_dir() / name
+        if source.is_file() and not target.exists():
+            shutil.copy2(source, target)
+            copied.append(name)
+    return copied

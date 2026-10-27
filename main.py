@@ -11,6 +11,9 @@ def main():
     # One-time copy of data from its old in-repo locations into
     # %LOCALAPPDATA%\CaseloadTool (see app_paths.py). Never overwrites.
     copied = app_paths.migrate_legacy_data()
+    # A "with my data" build brings groups/actions/templates/test mode along
+    # in starter_data next to the .exe - copied in on first launch here.
+    copied += app_paths.install_starter_data()
 
     # Initialize the "brain" of our app (the Controller)
     app = AppController()

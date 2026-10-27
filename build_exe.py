@@ -1,11 +1,18 @@
 # build_exe.py
-"""Builds the app into a folder you can zip up and share:
+"""Builds the app and zips it, ready to copy to another computer:
 
-    python build_exe.py
+    python build_exe.py                  -> dist/CaseloadTool.zip (to share)
+    python build_exe.py --with-my-data   -> dist/CaseloadTool-with-my-data.zip
 
-Output: dist/CaseloadTool/ - run dist/CaseloadTool/CaseloadTool.exe.
-To share it, zip the WHOLE CaseloadTool folder (the .exe needs the files
-next to it). Professors don't need Python installed.
+--with-my-data also packs YOUR groups, actions, templates, saved batches
+and test-mode setting (from %LOCALAPPDATA%/CaseloadTool) into the zip; the
+app copies them into place on its first launch on the new computer
+(app_paths.install_starter_data). Moving to your work laptop is then:
+copy the one zip, Extract All, run CaseloadTool.exe. Keep that zip to
+yourself - it's your setup, not a blank copy for colleagues.
+
+The zip holds the whole dist/CaseloadTool folder (the .exe needs the
+files next to it). Professors don't need Python installed.
 
 Decisions behind this (developer's calls, 2026-10-22):
   - One FOLDER, not a single .exe: starts faster (a one-file .exe unpacks
@@ -21,10 +28,12 @@ Decisions behind this (developer's calls, 2026-10-22):
 PyInstaller is a developer-only tool (pip install pyinstaller).
 """
 import shutil
+import sys
 from pathlib import Path
 
 import PyInstaller.__main__
 
+from src.services import app_paths
 from src.services.guide_markdown import to_html_document
 
 ROOT = Path(__file__).resolve().parent
@@ -68,8 +77,29 @@ def main() -> None:
     handout = ROOT / "dist" / APP_NAME / "Professor Guide.html"
     handout.write_text(to_html_document(guide), encoding="utf-8")
 
-    print(f"\nBuilt: {ROOT / 'dist' / APP_NAME / (APP_NAME + '.exe')}")
+    app_folder = ROOT / "dist" / APP_NAME
+    zip_name = APP_NAME
+    if "--with-my-data" in sys.argv:
+        starter = app_folder / app_paths.STARTER_DATA_FOLDER
+        starter.mkdir()
+        packed = []
+        for name in app_paths.STARTER_FILES:
+            source = app_paths.data_dir() / name
+            if source.is_file():
+                shutil.copy2(source, starter / name)
+                packed.append(name)
+        zip_name = f"{APP_NAME}-with-my-data"
+        print(f"\nPacked your data: {', '.join(packed) or 'nothing found'}")
+        if "test_mode.json" not in packed:
+            print("WARNING: no test_mode.json - this copy will start LIVE (real emails) on the new computer.")
+
+    for old_zip in (ROOT / "dist").glob(f"{APP_NAME}*.zip"):
+        old_zip.unlink()
+    zip_path = shutil.make_archive(str(ROOT / "dist" / zip_name), "zip", root_dir=ROOT / "dist", base_dir=APP_NAME)
+
+    print(f"\nBuilt: {app_folder / (APP_NAME + '.exe')}")
     print(f"Guide: {handout}")
+    print(f"Zip:   {zip_path}")
 
 
 if __name__ == "__main__":

@@ -83,3 +83,36 @@ def test_no_warning_once_the_real_folder_exists(tmp_path, monkeypatch, capsys):
     app_paths.data_dir()
 
     assert capsys.readouterr().err == ""
+
+
+# --- "with my data" builds: starter data copied in on first launch ----------
+
+def _starter(folder, **files):
+    folder.mkdir()
+    for name, text in files.items():
+        (folder / name).write_text(text, encoding="utf-8")
+    return folder
+
+
+def test_starter_data_is_copied_in_on_first_launch(tmp_path):
+    starter = _starter(tmp_path / "starter_data", **{
+        "groups.json": '[{"name": "C769"}]', "test_mode.json": '{"redirect_email": "me@example.test"}',
+    })
+    copied = app_paths.install_starter_data(starter)
+    assert sorted(copied) == ["groups.json", "test_mode.json"]
+    assert app_paths.test_mode_file().exists()  # starts in TEST MODE, not live
+
+
+def test_starter_data_never_overwrites_this_computers_data(tmp_path):
+    starter = _starter(tmp_path / "starter_data", **{"groups.json": '[{"name": "Old"}]'})
+    app_paths.groups_file().write_text('[{"name": "Already here"}]', encoding="utf-8")
+    assert app_paths.install_starter_data(starter) == []
+    assert "Already here" in app_paths.groups_file().read_text(encoding="utf-8")
+
+
+def test_no_starter_folder_means_nothing_to_do(tmp_path):
+    assert app_paths.install_starter_data(tmp_path / "missing") == []
+
+
+def test_running_from_source_never_installs_starter_data():
+    assert app_paths.install_starter_data() == []
