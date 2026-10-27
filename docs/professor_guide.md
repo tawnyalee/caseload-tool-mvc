@@ -49,7 +49,7 @@ Your account and signature will still be there. **Open Outlook (classic) before 
 
 ### Groups
 
-A **group** is usually one course. Pick it from the **Scenario Groups** dropdown on the left.
+A **group** is one course, named by its course code (for example **D424**). Pick it from the **Scenario Groups** dropdown on the left. **An Action in a course group only ever reaches students in that course** — you don't need a course filter. Put an Action in **General** if it should reach students in every course.
 
 - **+ Add Group** creates one.
 - **📝 Edit Group** renames it and sets whether the course has tasks or an objective assessment.
@@ -63,7 +63,7 @@ An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add 
 1. **Action Name** — what you'll see in the list.
 2. **Select Communication Method(s)** — check **Send Email**. (Texting isn't available yet; see below.)
 3. **Email Details** — the subject, your **Outlook signature**, and the email body (choose a template, or create one with **➕ New**).
-4. **Select Filters for Roster** — **➕ Add Filter Rule** narrows who it goes to (course, task status, dates, momentum, and more). With no filters, it goes to your whole caseload.
+4. **Select Filters for Roster** — **➕ Add Filter Rule** narrows who it goes to (course, task status, dates, momentum, and more). With no filters, it goes to everyone in the group's course (or your whole caseload, for an Action in General).
 5. **Note Details** — what to record in Salesforce after the email is sent: the note subject and body, plus an optional **follow-up note** for the roster view. These fields are only available when Send Email is checked.
 6. **Is Group Welcome Email** — check this on the one Action per group that **✉️ Send Welcome Emails** should run.
 7. Click **💾 Save Action**.

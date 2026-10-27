@@ -67,6 +67,20 @@ class RunControl:
 
 STOPPED_DETAIL = "Run was stopped before this student"
 
+GENERAL_GROUP_NAME = "General"
+
+
+def in_group_course(student: Student, group_name: str) -> bool:
+    """An action in a course group only reaches students in that course
+    (developer's call, 2026-10-27): groups are named by course code (the
+    same assumption resolve_course_code makes for notes). Before this, the
+    group only labeled the note, and an action with no course filter
+    reached every matching student in ANY course. "General" (or no group)
+    stays roster-wide. Case and surrounding spaces are ignored."""
+    if not group_name or group_name.strip() == GENERAL_GROUP_NAME:
+        return True
+    return student.course_code.strip().upper() == group_name.strip().upper()
+
 
 @dataclass
 class StepResult:
@@ -146,11 +160,15 @@ class ActionRunner:
         self.template_repo = template_repo
         self.activity_logger = activity_logger
 
-    def get_matching_students(self, action: Action) -> List[Student]:
-        """Students matching action.filters, before running anything - used
-        by the pre-send review dialog to show who would be contacted."""
+    def get_matching_students(self, action: Action, group_name: str = "") -> List[Student]:
+        """Students an action would contact, before running anything - used
+        by the pre-send review dialog. Same rule as run(): limited to the
+        group's course (see in_group_course), then action.filters."""
         all_students = self.student_provider.get_students()
-        return [s for s in all_students if matches_student(s, action.filters)]
+        return [
+            s for s in all_students
+            if in_group_course(s, group_name) and matches_student(s, action.filters)
+        ]
 
     def run(
         self,
@@ -177,7 +195,10 @@ class ActionRunner:
             self.activity_logger.log(f"Using email template: '{template_label}' (id={action.template_id})")
 
         all_students = self.student_provider.get_students()
-        students = [s for s in all_students if matches_student(s, action.filters)]
+        in_course = [s for s in all_students if in_group_course(s, group_name)]
+        if len(in_course) != len(all_students):
+            self.activity_logger.log(f"Limited to course '{group_name}': {len(in_course)} of {len(all_students)} students")
+        students = [s for s in in_course if matches_student(s, action.filters)]
         matched_count = len(students)
         if included_student_ids is not None:
             students = [s for s in students if s.salesforce_id in included_student_ids]

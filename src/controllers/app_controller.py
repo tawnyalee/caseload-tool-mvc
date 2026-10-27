@@ -415,7 +415,7 @@ class AppController:
         review_items = [
             MultiReviewItem(
                 key=group.id, label=f"{group.name} — {actions_by_id[group.welcome_action_id].name}",
-                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id]),
+                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id], group.name),
             )
             for group in eligible_groups
         ]
@@ -528,7 +528,7 @@ class AppController:
         review_items = [
             MultiReviewItem(
                 key=str(i), label=f"{group_name} — {action.name}",
-                students=self.action_runner.get_matching_students(action),
+                students=self.action_runner.get_matching_students(action, group_name),
             )
             for i, (action, group_name) in enumerate(items)
         ]
@@ -593,7 +593,7 @@ class AppController:
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
 
-        matches = self.action_runner.get_matching_students(action)
+        matches = self.action_runner.get_matching_students(action, active_group)
         template_body = ""
         if action.is_email and action.template_id:
             template = self.template_repo.get_by_id(action.template_id)

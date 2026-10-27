@@ -21,11 +21,11 @@ class _StaticStudentProvider(StudentDataProvider):
         return self._students
 
 
-def _make_students():
+def _make_students(course_code=""):
     return [
-        Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test", phone="555-0001"),
-        Student(salesforce_id="SF2", first_name="John", last_name="Roe", email="john@example.test", phone="555-0002"),
-        Student(salesforce_id="SF3", first_name="Amy", last_name="Lee", email="amy@example.test", phone="555-0003"),
+        Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test", phone="555-0001", course_code=course_code),
+        Student(salesforce_id="SF2", first_name="John", last_name="Roe", email="john@example.test", phone="555-0002", course_code=course_code),
+        Student(salesforce_id="SF3", first_name="Amy", last_name="Lee", email="amy@example.test", phone="555-0003", course_code=course_code),
     ]
 
 
@@ -73,7 +73,7 @@ def test_all_steps_succeed(tmp_path):
     runner, template, *_ = _make_runner(tmp_path, students)
     action = _make_action(template.id)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     # 3 students x (email + text + note) = 9 successful steps
     assert summary.succeeded == 9
@@ -109,7 +109,7 @@ def test_email_subject_and_body_render_merge_fields_per_student(tmp_path):
         template_id=template.id, email_subject="Hi {{student_name}}!",
     )
 
-    runner.run(action, group_name="Test Group")
+    runner.run(action, group_name="General")
 
     sent_by_email = {s["to"]: s for s in email_sender.sent}
     assert sent_by_email["jane@example.test"]["subject"] == "Hi Jane Doe!"
@@ -138,7 +138,7 @@ def test_run_only_processes_students_matching_the_actions_filters(tmp_path):
         template.id, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}]
     )
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     # Only Jane matches - 1 student x (email + text + note) = 3 successful steps
     assert summary.succeeded == 3
@@ -151,7 +151,7 @@ def test_run_with_no_filters_processes_the_full_roster(tmp_path):
     runner, template, *_ = _make_runner(tmp_path, students)
     action = _make_action(template.id, filters=[])
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     assert summary.succeeded == 9  # unchanged - same as no filters at all
 
@@ -174,7 +174,7 @@ def test_included_student_ids_further_restricts_a_run_to_the_selected_subset(tmp
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)
     action = _make_action(template.id, is_text=False, has_note=False)
 
-    runner.run(action, group_name="Test Group", included_student_ids={"SF2"})
+    runner.run(action, group_name="General", included_student_ids={"SF2"})
 
     assert [s["to"] for s in email_sender.sent] == ["john@example.test"]
 
@@ -184,7 +184,7 @@ def test_included_student_ids_none_means_everyone_filter_matched_still_runs(tmp_
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)
     action = _make_action(template.id, is_text=False, has_note=False)
 
-    runner.run(action, group_name="Test Group", included_student_ids=None)
+    runner.run(action, group_name="General", included_student_ids=None)
 
     assert len(email_sender.sent) == 3
 
@@ -197,7 +197,7 @@ def test_run_logs_currently_running_count_and_per_student_processing_lines(tmp_p
     runner.activity_logger = activity_logger
     action = _make_action(template.id, is_text=False, has_note=False)
 
-    runner.run(action, group_name="Test Group", included_student_ids={"SF1", "SF3"})
+    runner.run(action, group_name="General", included_student_ids={"SF1", "SF3"})
 
     joined = "\n".join(received)
     assert "'Welcome Action' is currently running for 2 students" in joined
@@ -212,7 +212,7 @@ def test_email_subject_and_body_overrides_replace_the_actions_own_content(tmp_pa
     action = _make_action(template.id, is_text=False, has_note=False)  # action.email_subject == "Welcome"
 
     runner.run(
-        action, group_name="Test Group",
+        action, group_name="General",
         email_subject_override="Overridden Subject {{student_name}}",
         email_body_override="Overridden body.",
     )
@@ -226,7 +226,7 @@ def test_no_override_falls_back_to_the_actions_own_subject_and_template_body(tmp
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)  # template.body == "<b>Hi</b>"
     action = _make_action(template.id, is_text=False, has_note=False)  # action.email_subject == "Welcome"
 
-    runner.run(action, group_name="Test Group")
+    runner.run(action, group_name="General")
 
     assert email_sender.sent[0]["subject"] == "Welcome"
     assert email_sender.sent[0]["body"] == "<b>Hi</b>"
@@ -247,7 +247,7 @@ def test_one_failed_communication_channel_still_leaves_a_note(tmp_path):
     runner, template, *_ = _make_runner(tmp_path, students, text_fail_for={"555-0001"})
     action = _make_action(template.id)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     # Jane: email succeeds, text fails, note still attempted (and succeeds)
     jane_results = [r for r in summary.results if r.student.salesforce_id == "SF1"]
@@ -265,7 +265,7 @@ def test_both_communication_channels_failing_skips_the_note(tmp_path):
     )
     action = _make_action(template.id)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     jane_results = [r for r in summary.results if r.student.salesforce_id == "SF1"]
     outcomes = {r.step_type: r.outcome for r in jane_results}
@@ -282,7 +282,7 @@ def test_text_success_alone_does_not_write_a_note(tmp_path):
     runner, template, _, _, note_writer = _make_runner(tmp_path, students, email_fail_for={"jane@example.test"})
     action = _make_action(template.id)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     jane_results = [r for r in summary.results if r.student.salesforce_id == "SF1"]
     outcomes = {r.step_type: r.outcome for r in jane_results}
@@ -295,7 +295,7 @@ def test_text_only_action_has_no_note_steps_at_all(tmp_path):
     runner, template, _, _, note_writer = _make_runner(tmp_path, students)
     action = _make_action(template.id, is_email=False, is_text=True, follow_up_note="Texted")
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     assert [r.step_type for r in summary.results] == ["text", "text", "text"]
     assert summary.skipped == 0
@@ -308,7 +308,7 @@ def test_no_note_content_means_no_note_steps_at_all(tmp_path):
     runner, template, *_ = _make_runner(tmp_path, students)
     action = _make_action(template.id, has_note=False)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     note_steps = [r for r in summary.results if r.step_type == "note"]
     assert note_steps == []
@@ -322,7 +322,7 @@ def test_a_single_students_failure_does_not_stop_the_run(tmp_path):
     )
     action = _make_action(template.id)
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     # Jane fails everything and her note gets skipped, but John and Amy still fully succeed
     john_results = [r for r in summary.results if r.student.salesforce_id == "SF2"]
@@ -338,7 +338,7 @@ def test_fake_senders_actually_receive_the_configured_content(tmp_path):
     runner, template, email_sender, text_sender, note_writer = _make_runner(tmp_path, students[:1])
     action = _make_action(template.id)
 
-    runner.run(action, group_name="Test Group")
+    runner.run(action, group_name="General")
 
     assert email_sender.sent[0]["to"] == "jane@example.test"
     assert email_sender.sent[0]["subject"] == "Welcome"
@@ -348,7 +348,7 @@ def test_fake_senders_actually_receive_the_configured_content(tmp_path):
 
 
 def test_note_record_uses_group_name_as_course_code_for_a_real_course_group(tmp_path):
-    students = _make_students()
+    students = _make_students(course_code="D424")
     received = []
     activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
     runner, template, *_ = _make_runner(tmp_path, students)
@@ -383,7 +383,7 @@ def test_note_record_falls_back_to_students_course_code_for_general(tmp_path):
 
 def test_note_record_issue_is_logged_for_a_student_with_no_salesforce_id(tmp_path):
     students = [
-        Student(salesforce_id="", first_name="Jane", last_name="Doe", email="jane@example.test"),
+        Student(salesforce_id="", first_name="Jane", last_name="Doe", email="jane@example.test", course_code="D424"),
     ]
     received = []
     activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
@@ -416,7 +416,7 @@ def test_run_logs_start_template_and_summary(tmp_path):
     )
     action = _make_action(template.id)
 
-    runner.run(action, group_name="Test Group")
+    runner.run(action, group_name="General")
 
     joined = "\n".join(received)
     assert "Starting run" in joined
@@ -429,7 +429,7 @@ def test_follow_up_note_is_updated_when_note_step_succeeds(tmp_path):
     runner, template, _, _, note_writer = _make_runner(tmp_path, students[:1])
     action = _make_action(template.id, follow_up_note="Sent welcome email")
 
-    runner.run(action, group_name="Test Group")
+    runner.run(action, group_name="General")
 
     assert note_writer.follow_up_notes == {"SF1": "Sent welcome email"}
 
@@ -441,7 +441,7 @@ def test_follow_up_note_only_action_still_triggers_a_note_step(tmp_path):
     runner, template, _, _, note_writer = _make_runner(tmp_path, students[:1])
     action = _make_action(template.id, has_note=False, follow_up_note="Sent welcome email")
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     note_steps = [r for r in summary.results if r.step_type == "note"]
     assert len(note_steps) == 1
@@ -467,7 +467,7 @@ def test_follow_up_note_failure_fails_the_whole_note_step(tmp_path):
     )
     action = _make_action(template.id, follow_up_note="Sent welcome email")
 
-    summary = runner.run(action, group_name="Test Group")
+    summary = runner.run(action, group_name="General")
 
     note_steps = [r for r in summary.results if r.step_type == "note"]
     assert note_steps[0].outcome == "failed"
@@ -484,14 +484,15 @@ def test_run_welcome_emails_aggregates_across_groups(tmp_path):
     action_b.id = "ACT-B"
 
     groups = [
-        Group(name="Group A", group_id="G1", welcome_action_id="ACT-A"),
-        Group(name="Group B", group_id="G2", welcome_action_id="ACT-B"),
+        Group(name="D424", group_id="G1", welcome_action_id="ACT-A"),
+        Group(name="D425", group_id="G2", welcome_action_id="ACT-B"),
         Group(name="No Welcome Set", group_id="G3", welcome_action_id=None),
         Group(name="Dangling Reference", group_id="G4", welcome_action_id="ACT-MISSING"),
     ]
     actions_by_id = {"ACT-A": action_a, "ACT-B": action_b}
 
-    students = _make_students()
+    students = _make_students(course_code="D424")
+    students[2].course_code = "D425"  # Jane + John in D424, Amy in D425
     runner = ActionRunner(
         student_provider=_StaticStudentProvider(students),
         email_sender=FakeEmailSender(),
@@ -503,8 +504,9 @@ def test_run_welcome_emails_aggregates_across_groups(tmp_path):
 
     summary = runner.run_welcome_emails(groups, actions_by_id)
 
-    # 2 groups x 3 students x 1 email step = 6 successful steps; other 2 groups skipped
-    assert summary.succeeded == 6
+    # Each student is emailed once, by their own course's welcome action
+    # (D424: Jane + John, D425: Amy); the other 2 groups are skipped.
+    assert summary.succeeded == 3
     assert summary.failed == 0
     assert summary.skipped == 0
 
@@ -522,11 +524,11 @@ def test_run_batch_itemizes_results_per_action(tmp_path):
     )
     action_b.name = "Action B"
 
-    batch_summary = runner.run_batch([(action_a, "Group A"), (action_b, "Group B")])
+    batch_summary = runner.run_batch([(action_a, "General"), (action_b, "General")])
 
     assert len(batch_summary.items) == 2
     assert batch_summary.items[0].action_name == "Action A"
-    assert batch_summary.items[0].group_name == "Group A"
+    assert batch_summary.items[0].group_name == "General"
     assert batch_summary.items[0].summary.succeeded == 3  # Jane: email + text + note
     assert batch_summary.items[1].action_name == "Action B"
     assert batch_summary.items[1].summary.succeeded == 3  # John: email + text + note
@@ -553,7 +555,7 @@ def test_run_batch_continues_after_one_action_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "run", flaky_run)
 
-    batch_summary = runner.run_batch([(broken_action, "Group A"), (good_action, "Group B")])
+    batch_summary = runner.run_batch([(broken_action, "General"), (good_action, "General")])
 
     assert len(batch_summary.items) == 2
     assert batch_summary.items[0].error == "boom"
@@ -573,12 +575,12 @@ def test_run_welcome_emails_included_ids_by_group_id_restricts_each_group(tmp_pa
     action_b.id = "ACT-B"
 
     groups = [
-        Group(name="Group A", group_id="G1", welcome_action_id="ACT-A"),
-        Group(name="Group B", group_id="G2", welcome_action_id="ACT-B"),
+        Group(name="D424", group_id="G1", welcome_action_id="ACT-A"),
+        Group(name="D424", group_id="G2", welcome_action_id="ACT-B"),
     ]
     actions_by_id = {"ACT-A": action_a, "ACT-B": action_b}
 
-    students = _make_students()  # SF1 Jane, SF2 John, SF3 Amy
+    students = _make_students(course_code="D424")  # SF1 Jane, SF2 John, SF3 Amy
     email_sender = FakeEmailSender()
     runner = ActionRunner(
         student_provider=_StaticStudentProvider(students),
@@ -608,7 +610,7 @@ def test_run_batch_included_ids_by_index_restricts_each_item(tmp_path):
     action_two.name = "Second"
 
     runner.run_batch(
-        [(action_one, "Group A"), (action_two, "Group B")],
+        [(action_one, "General"), (action_two, "General")],
         included_ids_by_index={0: {"SF2"}, 1: {"SF1", "SF3"}},
     )
 
@@ -740,7 +742,7 @@ def test_run_reports_progress_before_each_student(tmp_path):
     runner, template, *_ = _make_runner(tmp_path, students)
     seen = []
 
-    runner.run(_make_action(template.id), group_name="G", control=RunControl(on_progress=lambda *a: seen.append(a)))
+    runner.run(_make_action(template.id), group_name="General", control=RunControl(on_progress=lambda *a: seen.append(a)))
 
     assert seen == [(1, 3, "Jane Doe"), (2, 3, "John Roe"), (3, 3, "Amy Lee")]
 
@@ -752,7 +754,7 @@ def test_stop_finishes_the_current_student_then_marks_the_rest_not_started(tmp_p
     # Ask to stop while the first student is being processed.
     control.on_progress = lambda position, total, name: control.request_stop() if position == 1 else None
 
-    summary = runner.run(_make_action(template.id), group_name="G", control=control)
+    summary = runner.run(_make_action(template.id), group_name="General", control=control)
 
     assert [s["to"] for s in email_sender.sent] == ["jane@example.test"]  # Jane finished
     stopped = [r for r in summary.results if r.step_type == "stopped"]
@@ -773,7 +775,7 @@ def test_ad_hoc_email_can_be_stopped_too(tmp_path):
 
 
 def test_batch_labels_progress_with_the_item_and_stops_across_items(tmp_path):
-    students = _make_students()
+    students = _make_students(course_code="D424")
     runner, template, email_sender, _, _ = _make_runner(tmp_path, students)
     action = _make_action(template.id, is_text=False, has_note=False)
     seen = []
@@ -785,7 +787,7 @@ def test_batch_labels_progress_with_the_item_and_stops_across_items(tmp_path):
             control.request_stop()  # during the first item's first student
     control.on_progress = on_progress
 
-    batch = runner.run_batch([(action, "D424"), (action, "D425")], control=control)
+    batch = runner.run_batch([(action, "D424"), (action, "D424")], control=control)
 
     assert seen == ["D424 — Welcome Action (1 of 2): Jane Doe"]
     assert len(email_sender.sent) == 1
@@ -810,7 +812,7 @@ def test_email_run_stops_before_any_student_when_outlook_is_not_open(tmp_path):
     sender = _NotReadyEmailSender()
     runner, template = _runner_with(tmp_path, sender)
     with pytest.raises(RuntimeError, match="Outlook isn't open"):
-        runner.run(_make_action(template.id), group_name="G")
+        runner.run(_make_action(template.id), group_name="General")
     assert sender.sent == []
 
 
@@ -822,11 +824,49 @@ def test_ad_hoc_email_stops_before_any_student_when_outlook_is_not_open(tmp_path
 
 def test_text_only_run_does_not_need_outlook(tmp_path):
     runner, template = _runner_with(tmp_path, _NotReadyEmailSender())
-    summary = runner.run(_make_action(template.id, is_email=False, is_text=True, has_note=False), group_name="G")
+    summary = runner.run(_make_action(template.id, is_email=False, is_text=True, has_note=False), group_name="General")
     assert [r.step_type for r in summary.results] == ["text"] * 3
 
 
 def test_batch_reports_outlook_not_open_per_action_instead_of_crashing(tmp_path):
     runner, template = _runner_with(tmp_path, _NotReadyEmailSender())
-    batch = runner.run_batch([(_make_action(template.id), "D424")])
+    batch = runner.run_batch([(_make_action(template.id), "General")])
     assert "Outlook isn't open" in batch.items[0].error
+
+
+# --- An action in a course group only reaches that course's students -------
+
+def test_course_group_limits_the_run_to_that_courses_students(tmp_path):
+    students = _make_students(course_code="D424")
+    students[2].course_code = "E210"  # Amy is in a different course
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+
+    runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="D424")
+
+    assert [s["to"] for s in email_sender.sent] == ["jane@example.test", "john@example.test"]
+
+
+def test_general_group_still_reaches_every_course(tmp_path):
+    students = _make_students(course_code="D424")
+    students[2].course_code = "E210"
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+
+    runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="General")
+
+    assert len(email_sender.sent) == 3
+
+
+def test_course_match_ignores_case_and_spaces(tmp_path):
+    students = _make_students(course_code=" d424 ")
+    runner, template, *_ = _make_runner(tmp_path, students)
+    assert len(runner.get_matching_students(_make_action(template.id), "D424")) == 3
+
+
+def test_review_list_uses_the_same_course_rule_as_the_run(tmp_path):
+    students = _make_students(course_code="D424")
+    students[0].course_code = "C769"
+    runner, template, *_ = _make_runner(tmp_path, students)
+
+    matches = runner.get_matching_students(_make_action(template.id), "D424")
+
+    assert [s.salesforce_id for s in matches] == ["SF2", "SF3"]
