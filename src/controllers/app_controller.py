@@ -579,6 +579,7 @@ class AppController:
             SettingsView,
             groups=[g for g in self.groups if g.name != "General"],
             on_save=self.handle_save_course_settings,
+            templates=[(t.id, t.name) for t in self.template_repo.load_all()],
         )
 
     def handle_save_course_settings(self, settings_by_group_id: Dict[str, dict]) -> None:
@@ -593,6 +594,7 @@ class AppController:
             group.has_tasks = settings["has_tasks"]
             group.task_count = settings["task_count"]
             group.has_objective_assessment = settings["has_objective_assessment"]
+            group.task_emails = settings.get("task_emails", group.task_emails)
         self.group_repo.save_groups(self.groups)
         self.activity_logger.log("Course settings saved")
         messagebox.showinfo("Settings", "Settings saved.")

@@ -54,6 +54,7 @@ A **group** is usually one course. Pick it from the **Scenario Groups** dropdown
 - **+ Add Group** creates one. Leave **This group is a course** checked and name it by its course code (for example **D424**).
 - **📝 Edit Group** renames it. Renaming never changes the course it's for.
 - **⚙ Settings → Courses** sets each group's details: whether it's a course, its **course code**, whether it **has tasks** and **how many**, and whether it **has an objective assessment** (a course can have tasks, an OA, or both). Click **💾 Save Settings** when done.
+- **Task emails** (in the same card, once a course has tasks): for each task, choose the template to send a student who **just passed** it, and its subject. There's no row for the last task of a tasks-only course (those students have finished), but a course that also has an OA gets a **Task N (OA prep)** row for the last task.
 - **❌ Delete** removes it **and all of its Actions** (you'll be asked to confirm).
 - **General** is always there and can't be renamed or deleted.
 

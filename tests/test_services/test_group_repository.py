@@ -84,3 +84,10 @@ def test_an_explicitly_unmarked_group_stays_unmarked_even_with_tasks(tmp_path):
     path = tmp_path / "groups.json"
     path.write_text(_json.dumps([{"id": "1", "name": "D424", "has_tasks": True, "is_course": False}]), encoding="utf-8")
     assert GroupRepository(data_file=path).load_groups()[0].is_course is False
+
+
+def test_task_emails_round_trip(tmp_path):
+    repo = GroupRepository(data_file=tmp_path / "groups.json")
+    repo.save_groups([Group(name="D424", is_course=True, course_code="D424", has_tasks=True, task_count=3,
+                            task_emails={"1": {"template_id": "T2", "subject": "On to Task 2"}})])
+    assert repo.load_groups()[0].task_emails == {"1": {"template_id": "T2", "subject": "On to Task 2"}}
