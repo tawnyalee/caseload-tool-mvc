@@ -20,6 +20,11 @@ from src.views.multi_select_entry import MultiSelectEntry
 _NO_VALUE_OPERATORS = {Operator.IS_EMPTY.value, Operator.IS_NOT_EMPTY.value}
 _MULTI_VALUE_OPERATORS = {Operator.IS_ONE_OF.value}
 _TWO_VALUE_OPERATORS = {Operator.BETWEEN.value}
+# Date operators whose value is a number of days, not a date. They used to
+# fall through to the date picker, so "more than N days ago" could never match.
+_DAY_COUNT_OPERATORS = {
+    Operator.MORE_THAN_DAYS_AGO.value, Operator.WITHIN_NEXT_DAYS.value, Operator.WITHIN_LAST_DAYS.value,
+}
 
 FIELD_NAMES_SORTED = sorted(FILTERABLE_FIELDS.keys())
 
@@ -110,6 +115,14 @@ class FilterRow(ctk.CTkFrame):
             end = DatePickerEntry(self.value_frame)
             end.pack(side="left")
             self._value_widgets = [start, to_label, end]
+            return
+
+        if operator in _DAY_COUNT_OPERATORS:
+            days = ctk.CTkEntry(self.value_frame, width=60, placeholder_text="N")
+            days.pack(side="left")
+            days_label = ctk.CTkLabel(self.value_frame, text="days")
+            days_label.pack(side="left", padx=5)
+            self._value_widgets = [days, days_label]
             return
 
         if field_def.kind == FieldKind.DATE:

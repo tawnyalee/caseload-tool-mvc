@@ -51,6 +51,11 @@ def _matches_condition(student: Student, condition: Dict[str, Any]) -> bool:
 
     if operator == Operator.IS_EMPTY.value:
         return is_blank
+    if operator == Operator.DOES_NOT_CONTAIN.value:
+        # A blank field doesn't contain anything, so it matches - e.g. "follow-up
+        # note doesn't contain 'Task 3 tips sent'" must include students with
+        # no follow-up note yet (the point is to skip only those already sent).
+        return is_blank or str(condition.get("value", "")).lower() not in raw_value.lower()
     if operator == Operator.IS_NOT_EMPTY.value:
         return not is_blank
     if is_blank:
@@ -151,6 +156,15 @@ def _date_compare(raw_value: Any, operator: str, value: Any) -> bool:
     if operator == Operator.MORE_THAN_DAYS_AGO.value:
         n = _parse_number(value)
         return n is not None and left < (date.today() - timedelta(days=int(n)))
+
+    if operator == Operator.WITHIN_LAST_DAYS.value:
+        # Today and the N days before it, e.g. 3 on a Monday = Fri..Mon - the
+        # weekend gap "yesterday" alone misses (developer's daily workflow).
+        n = _parse_number(value)
+        if n is None:
+            return False
+        today = date.today()
+        return today - timedelta(days=int(n)) <= left <= today
 
     if operator == Operator.WITHIN_NEXT_DAYS.value:
         n = _parse_number(value)

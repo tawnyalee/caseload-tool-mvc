@@ -55,3 +55,11 @@ def test_the_real_guide_parses_and_covers_the_essentials():
     for needed in ("Stay on Outlook (classic)", "Starting the app and logging in", "Test mode",
                    "Your data and privacy", "Troubleshooting"):
         assert needed in headings
+
+
+def test_numbered_list_interrupted_by_bullets_keeps_counting():
+    md = "1. one\n2. two\n   - sub a\n   - sub b\n3. three\n"
+    blocks = parse_blocks(md)
+    assert [(b.kind, b.start) for b in blocks] == [("ol", 1), ("ul", 1), ("ol", 3)]
+    page = to_html_document(md)
+    assert '<ol start="3"><li>three</li></ol>' in page

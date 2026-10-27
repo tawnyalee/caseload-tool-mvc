@@ -157,3 +157,14 @@ def test_saved_choice_missing_from_todays_options_is_kept_not_dropped(ctk_root):
     picker = MultiSelectEntry(ctk_root, options=["D424", "D425"])
     picker.set_selected(["C769", "D424"])
     assert set(picker.get_selected()) == {"C769", "D424"}
+
+
+def test_day_count_operators_show_a_number_box_not_a_date_picker(ctk_root):
+    """Regression: "more than N days ago" used to show a date picker, so it
+    could never match."""
+    for operator in ("WithinLastDays", "MoreThanDaysAgo", "WithinNextDays"):
+        row = FilterRow(master=ctk_root)
+        _select_field(row, "latest_task_date")
+        _select_operator(row, operator)
+        row._value_widgets[0].insert(0, "3")
+        assert row.to_condition() == {"field": "latest_task_date", "operator": operator, "value": "3"}

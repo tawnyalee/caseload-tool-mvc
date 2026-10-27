@@ -68,6 +68,19 @@ An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add 
 6. **Is Group Welcome Email** — check this on the one Action per group that **✉️ Send Welcome Emails** should run.
 7. Click **💾 Save Action**.
 
+### Recipe: email students who just passed a task
+
+For a daily "next task" email that also catches weekend passes and never repeats:
+
+1. Put the Action in the course's group (for example **D424**).
+2. Add these filter rules:
+   - **latest_task_status** → **IsOneOf** → **Passed**
+   - **latest_task_date** → **WithinLastDays** → **3** (today and the 3 days before, so a Monday run catches Friday and the weekend)
+   - **latest_task_number** → **Equals** → the task they just passed, e.g. **2**
+   - **course_followup_note** → **DoesNotContain** → a phrase only this email uses, e.g. **Task 3 tips sent**
+3. In **Note Details**, set the **follow-up note** to that same phrase (**Task 3 tips sent**), so tomorrow's run skips anyone who already got it.
+4. Repeat for each task, then save them all as one **Saved Batch** and run it each morning.
+
 ### Personalizing emails
 
 Use **Insert Field** while writing a subject or body to add details that fill in for each student:

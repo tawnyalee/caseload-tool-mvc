@@ -28,6 +28,9 @@ _NUMBERED = re.compile(r"^\d+\.\s+")
 class Block:
     kind: str  # "h1" | "h2" | "h3" | "p" | "ul" | "ol" | "quote" | "code"
     lines: List[str]  # one entry per list item; otherwise a single entry
+    start: int = 1  # numbered lists: the first item's number, so a list
+                    # interrupted by bullets (e.g. steps 1-2, bullets, steps 3-4)
+                    # keeps counting instead of restarting at 1
 
 
 def parse_blocks(markdown: str) -> List[Block]:
@@ -60,7 +63,7 @@ def parse_blocks(markdown: str) -> List[Block]:
             if blocks and blocks[-1].kind == "ol":
                 blocks[-1].lines.append(item)
             else:
-                blocks.append(Block("ol", [item]))
+                blocks.append(Block("ol", [item], start=int(line.split(".", 1)[0])))
         elif line.startswith("> "):
             flush_paragraph()
             blocks.append(Block("quote", [line[2:]]))
@@ -124,7 +127,8 @@ def to_html_document(markdown: str) -> str:
             body.append(f"<{block.kind}>{_inline_html(block.lines[0])}</{block.kind}>")
         elif block.kind in ("ul", "ol"):
             items = "".join(f"<li>{_inline_html(item)}</li>" for item in block.lines)
-            body.append(f"<{block.kind}>{items}</{block.kind}>")
+            start = f' start="{block.start}"' if block.kind == "ol" and block.start != 1 else ""
+            body.append(f"<{block.kind}{start}>{items}</{block.kind}>")
         elif block.kind == "quote":
             body.append(f"<blockquote>{_inline_html(block.lines[0])}</blockquote>")
         elif block.kind == "code":

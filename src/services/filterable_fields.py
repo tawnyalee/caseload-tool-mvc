@@ -27,6 +27,7 @@ class Operator(Enum):
     EQUALS = "Equals"
     IS_ONE_OF = "IsOneOf"
     CONTAINS = "Contains"
+    DOES_NOT_CONTAIN = "DoesNotContain"
     GREATER_THAN = "GreaterThan"
     GREATER_THAN_OR_EQUAL = "GreaterThanOrEqual"
     LESS_THAN = "LessThan"
@@ -38,6 +39,7 @@ class Operator(Enum):
     BETWEEN = "Between"
     MORE_THAN_DAYS_AGO = "MoreThanDaysAgo"
     WITHIN_NEXT_DAYS = "WithinNextDays"
+    WITHIN_LAST_DAYS = "WithinLastDays"
     IS_EMPTY = "IsEmpty"
     IS_NOT_EMPTY = "IsNotEmpty"
 
@@ -54,7 +56,7 @@ class FilterableField:
 _TEXT_EQUALS_OPS = [Operator.EQUALS]
 _SET_VALUE_OPS = [Operator.IS_ONE_OF]
 _SET_VALUE_OPS_WITH_EMPTY = [Operator.IS_ONE_OF, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY]
-_CONTAINS_OPS = [Operator.CONTAINS, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY]
+_CONTAINS_OPS = [Operator.CONTAINS, Operator.DOES_NOT_CONTAIN, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY]
 _NUMERIC_OPS = [
     Operator.EQUALS, Operator.GREATER_THAN, Operator.GREATER_THAN_OR_EQUAL,
     Operator.LESS_THAN, Operator.LESS_THAN_OR_EQUAL,
@@ -63,7 +65,7 @@ _NUMERIC_OPS_WITH_EMPTY = _NUMERIC_OPS + [Operator.IS_EMPTY]
 _DATE_OPS = [
     Operator.EQUALS, Operator.BEFORE, Operator.ON_OR_BEFORE, Operator.AFTER,
     Operator.ON_OR_AFTER, Operator.BETWEEN, Operator.MORE_THAN_DAYS_AGO,
-    Operator.WITHIN_NEXT_DAYS, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY,
+    Operator.WITHIN_NEXT_DAYS, Operator.WITHIN_LAST_DAYS, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY,
 ]
 _BOOLEAN_OPS = [Operator.EQUALS]
 

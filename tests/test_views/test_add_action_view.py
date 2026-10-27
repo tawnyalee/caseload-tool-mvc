@@ -318,3 +318,15 @@ def test_editing_an_action_with_a_roster_filter_still_opens_when_roster_is_not_l
     )
     assert len(view.filter_rows) == 1
     assert view.get_action_data()["filters"] == action_data["filters"]
+
+
+def test_editing_an_action_repopulates_a_days_filter_and_does_not_contain(ctk_root):
+    filters = [
+        {"field": "latest_task_date", "operator": "WithinLastDays", "value": "3"},
+        {"field": "course_followup_note", "operator": "DoesNotContain", "value": "Task 3 tips sent"},
+    ]
+    view = AddActionView(
+        master=ctk_root, controller=MockController(), groups=["Group A"],
+        action_data={"group_name": "Group A", "filters": filters},
+    )
+    assert view.get_action_data()["filters"] == filters

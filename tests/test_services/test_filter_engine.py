@@ -177,3 +177,36 @@ def test_real_example_low_momentum_across_multiple_courses():
 
     already_submitted_student = _student(course_code="D424", momentum="Low", task_1="2026-06-15 (1)")
     assert matches_student(already_submitted_student, conditions) is False
+
+
+def _days_ago(n):
+    return (date.today() - timedelta(days=n)).strftime("%m/%d/%Y")
+
+
+def test_within_last_days_covers_today_back_through_n_days():
+    rule = [{"field": "latest_task_date", "operator": "WithinLastDays", "value": "3"}]
+    assert matches_student(_student(latest_task_date=_days_ago(0)), rule) is True
+    assert matches_student(_student(latest_task_date=_days_ago(3)), rule) is True  # e.g. Friday, run on Monday
+    assert matches_student(_student(latest_task_date=_days_ago(4)), rule) is False
+    future = (date.today() + timedelta(days=1)).strftime("%m/%d/%Y")
+    assert matches_student(_student(latest_task_date=future), rule) is False
+    assert matches_student(_student(latest_task_date=""), rule) is False
+
+
+def test_does_not_contain_skips_students_already_sent_and_keeps_blank_ones():
+    rule = [{"field": "course_followup_note", "operator": "DoesNotContain", "value": "Task 3 tips sent"}]
+    assert matches_student(_student(course_followup_note="task 3 tips SENT 10/27"), rule) is False  # case-insensitive
+    assert matches_student(_student(course_followup_note="Welcome email sent"), rule) is True
+    assert matches_student(_student(course_followup_note=""), rule) is True  # nothing sent yet
+
+
+def test_passed_recently_and_not_yet_emailed_rule_end_to_end():
+    rules = [
+        {"field": "latest_task_status", "operator": "IsOneOf", "value": ["Passed"]},
+        {"field": "latest_task_date", "operator": "WithinLastDays", "value": "3"},
+        {"field": "course_followup_note", "operator": "DoesNotContain", "value": "Task 3 tips sent"},
+    ]
+    assert matches_student(_student(latest_task_status="Passed", latest_task_date=_days_ago(2)), rules) is True
+    assert matches_student(_student(latest_task_status="Revisions Needed", latest_task_date=_days_ago(1)), rules) is False
+    assert matches_student(_student(latest_task_status="Passed", latest_task_date=_days_ago(1),
+                                    course_followup_note="Task 3 tips sent"), rules) is False

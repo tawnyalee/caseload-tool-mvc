@@ -90,7 +90,7 @@ class HelpView(ctk.CTkFrame):
                 self._insert_inline(block.lines[0], block.kind)
                 text.insert("end", "\n")
             elif block.kind in ("ul", "ol"):
-                for number, item in enumerate(block.lines, start=1):
+                for number, item in enumerate(block.lines, start=block.start):
                     marker = "•  " if block.kind == "ul" else f"{number}.  "
                     text.insert("end", marker, ("item",))
                     self._insert_inline(item, "item")
