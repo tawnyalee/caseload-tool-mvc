@@ -901,3 +901,23 @@ def test_run_buttons_proceed_when_the_caseload_is_loaded(mock_showinfo):
     controller.student_data_provider = MagicMock(is_loaded=True)
     assert AppController._caseload_missing_and_told_user(controller) is False
     mock_showinfo.assert_not_called()
+
+
+# --- Settings: course settings saved by group ID -------------------------------
+
+@patch("controllers.app_controller.messagebox.showinfo")
+def test_saving_course_settings_updates_groups_by_id_and_persists(mock_showinfo):
+    controller = _bare_controller()
+    d424 = Group(name="Capstone", group_id="G1")
+    other = Group(name="Capstone", group_id="G2")  # same name - must not be touched
+    controller.groups = [d424, other]
+    controller.group_repo = MagicMock()
+
+    AppController.handle_save_course_settings(controller, {"G1": {
+        "is_course": True, "course_code": "D424", "has_tasks": True, "task_count": 5,
+        "has_objective_assessment": True,
+    }})
+
+    assert (d424.is_course, d424.course_code, d424.task_count, d424.has_objective_assessment) == (True, "D424", 5, True)
+    assert other.is_course is False
+    controller.group_repo.save_groups.assert_called_once_with(controller.groups)

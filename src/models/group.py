@@ -12,6 +12,9 @@ class Group:
         welcome_action_id: Optional[str] = None,
         has_tasks: bool = False,
         has_objective_assessment: bool = False,
+        is_course: bool = False,
+        course_code: str = "",
+        task_count: int = 0,
     ):
         # If a group_id is passed (e.g., loaded from database/file), use it.
         # Otherwise, generate a brand new unique ID.
@@ -26,6 +29,19 @@ class Group:
         # to a course that doesn't use tasks at all).
         self.has_tasks = has_tasks
         self.has_objective_assessment = has_objective_assessment
+        # Course settings (configured in Settings, 2026-10-27). A group can be
+        # a course or not: a course group's actions only reach students whose
+        # course matches course_code (see action_runner.in_group_course); any
+        # other group reaches every course, like General. course_code is
+        # separate from the name so a group can be named anything.
+        self.is_course = is_course
+        self.course_code = course_code
+        self.task_count = task_count
+
+    @property
+    def scoped_course_code(self) -> str:
+        """The course this group's actions are limited to, or "" for none."""
+        return self.course_code.strip() if self.is_course else ""
 
     def add_scenario(self, scenario_name: str):
         """Adds a scenario name to this group if it isn't already there."""

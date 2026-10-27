@@ -25,19 +25,34 @@ class GroupRepository:
         try:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
-                return [
-                    Group(
-                        name=item["name"],
-                        scenarios=item.get("scenarios", []),
-                        welcome_action_id=item.get("welcome_action_id"),
-                        group_id=item.get("id"),
-                        has_tasks=item.get("has_tasks", False),
-                        has_objective_assessment=item.get("has_objective_assessment", False),
-                    )
-                    for item in raw_data
-                ]
+                return [self._from_dict(item) for item in raw_data]
         except (json.JSONDecodeError, FileNotFoundError):
             return []
+
+    @staticmethod
+    def _from_dict(item: dict) -> Group:
+        has_tasks = item.get("has_tasks", False)
+        has_oa = item.get("has_objective_assessment", False)
+        if "is_course" in item:
+            is_course, course_code = item["is_course"], item.get("course_code", "")
+        else:
+            # Saved before course settings existed (2026-10-27): a group with
+            # tasks or an OA was a course named by its course code - the
+            # assumption the app made everywhere until then - so it becomes
+            # one automatically and nothing changes for the professor.
+            is_course = bool(has_tasks or has_oa)
+            course_code = item["name"] if is_course else ""
+        return Group(
+            name=item["name"],
+            scenarios=item.get("scenarios", []),
+            welcome_action_id=item.get("welcome_action_id"),
+            group_id=item.get("id"),
+            has_tasks=has_tasks,
+            has_objective_assessment=has_oa,
+            is_course=is_course,
+            course_code=course_code,
+            task_count=item.get("task_count", 0),
+        )
 
     def save_groups(self, groups: List[Group]) -> None:
         """Saves a list of Group objects to groups.json."""
@@ -49,6 +64,9 @@ class GroupRepository:
                 "welcome_action_id": g.welcome_action_id,
                 "has_tasks": g.has_tasks,
                 "has_objective_assessment": g.has_objective_assessment,
+                "is_course": g.is_course,
+                "course_code": g.course_code,
+                "task_count": g.task_count,
             }
             for g in groups
         ]
@@ -60,6 +78,7 @@ class GroupRepository:
         group_name: str,
         has_tasks: bool = False,
         has_objective_assessment: bool = False,
+        is_course: bool = False,
     ) -> Optional[Group]:
         """Creates a new Group, saves it to groups.json, and returns the new Group."""
         groups = self.load_groups()
@@ -72,6 +91,8 @@ class GroupRepository:
             name=group_name.strip(),
             has_tasks=has_tasks,
             has_objective_assessment=has_objective_assessment,
+            is_course=is_course,
+            course_code=group_name.strip() if is_course else "",
         )
         groups.append(new_group)
         self.save_groups(groups)

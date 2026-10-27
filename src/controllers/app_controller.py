@@ -36,6 +36,7 @@ from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem a
 from src.views.run_summary_modal import RunSummaryModal
 from src.views.run_progress_modal import RunProgressModal
 from src.views.help_view import HelpView
+from src.views.settings_view import SettingsView
 from src.services.run_report import batch_issue_lines, issue_lines
 
 
@@ -162,6 +163,7 @@ class AppController:
             note_writer=self.note_writer,
             template_repo=self.template_repo,
             activity_logger=self.activity_logger,
+            group_lookup=self._find_group_by_id,
         )
 
         # Strongly typed references
@@ -415,7 +417,7 @@ class AppController:
         review_items = [
             MultiReviewItem(
                 key=group.id, label=f"{group.name} — {actions_by_id[group.welcome_action_id].name}",
-                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id], group.name),
+                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id]),
             )
             for group in eligible_groups
         ]
@@ -528,7 +530,7 @@ class AppController:
         review_items = [
             MultiReviewItem(
                 key=str(i), label=f"{group_name} — {action.name}",
-                students=self.action_runner.get_matching_students(action, group_name),
+                students=self.action_runner.get_matching_students(action),
             )
             for i, (action, group_name) in enumerate(items)
         ]
@@ -574,9 +576,26 @@ class AppController:
 
     def handle_settings_requested(self) -> None:
         self.switch_workspace_view(
-            PlaceholderView,
-            message="⚙ Settings Panel\n\n[Settings Configuration View - Logic Coming Soon]"
+            SettingsView,
+            groups=[g for g in self.groups if g.name != "General"],
+            on_save=self.handle_save_course_settings,
         )
+
+    def handle_save_course_settings(self, settings_by_group_id: Dict[str, dict]) -> None:
+        """Applies the Settings screen's course settings (keyed by group ID,
+        never by name) and saves them."""
+        for group in self.groups:
+            settings = settings_by_group_id.get(group.id)
+            if not settings:
+                continue
+            group.is_course = settings["is_course"]
+            group.course_code = settings["course_code"]
+            group.has_tasks = settings["has_tasks"]
+            group.task_count = settings["task_count"]
+            group.has_objective_assessment = settings["has_objective_assessment"]
+        self.group_repo.save_groups(self.groups)
+        self.activity_logger.log("Course settings saved")
+        messagebox.showinfo("Settings", "Settings saved.")
 
     def handle_help_requested(self) -> None:
         self.switch_workspace_view(HelpView)  # the professor guide - see help_view.py
@@ -593,7 +612,7 @@ class AppController:
         if hasattr(self, "nav_panel") and hasattr(self.nav_panel, "group_dropdown"):
             active_group = self.nav_panel.group_dropdown.get()
 
-        matches = self.action_runner.get_matching_students(action, active_group)
+        matches = self.action_runner.get_matching_students(action)
         template_body = ""
         if action.is_email and action.template_id:
             template = self.template_repo.get_by_id(action.template_id)
@@ -693,25 +712,20 @@ class AppController:
         group_name_entry.pack(pady=10, padx=20, fill="x")
         group_name_entry.focus()
 
-        has_tasks_var = ctk.StringVar(value="off")
-        has_tasks_checkbox = ctk.CTkCheckBox(
+        # Course details (code, tasks, OA, task emails) live in Settings; this
+        # just marks it, using the name as the course code to start with.
+        is_course_var = ctk.StringVar(value="on")
+        ctk.CTkCheckBox(
             dialog,
-            text="This course has tasks",
-            variable=has_tasks_var,
+            text="This group is a course (named by its course code)",
+            variable=is_course_var,
             onvalue="on",
             offvalue="off",
-        )
-        has_tasks_checkbox.pack(pady=(5, 5), padx=20, anchor="w")
-
-        has_oa_var = ctk.StringVar(value="off")
-        has_oa_checkbox = ctk.CTkCheckBox(
-            dialog,
-            text="This course has an objective assessment",
-            variable=has_oa_var,
-            onvalue="on",
-            offvalue="off",
-        )
-        has_oa_checkbox.pack(pady=(0, 10), padx=20, anchor="w")
+        ).pack(pady=(5, 2), padx=20, anchor="w")
+        ctk.CTkLabel(
+            dialog, text="Set tasks, OA and task emails in ⚙ Settings.",
+            text_color=("gray40", "gray60"),
+        ).pack(padx=20, anchor="w")
 
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
@@ -730,11 +744,7 @@ class AppController:
         def save_new_group():
             entered_name = group_name_entry.get().strip()
             if entered_name:
-                new_group = self.group_repo.add_group(
-                    entered_name,
-                    has_tasks=has_tasks_var.get() == "on",
-                    has_objective_assessment=has_oa_var.get() == "on",
-                )
+                new_group = self.group_repo.add_group(entered_name, is_course=is_course_var.get() == "on")
                 if new_group:
                     self.groups = self.group_repo.load_groups()
                     
@@ -766,8 +776,10 @@ class AppController:
         btn_save.pack(side="right")
 
     def handle_rename_group(self, group_name: str) -> None:
-        """Opens the group editor — name plus has_tasks/has_objective_assessment,
-        the only per-group settings the app has today."""
+        """Opens the group editor - the name only. Course settings (course
+        code, tasks, OA, task emails) moved to the Settings screen
+        (developer's call, 2026-10-27). Renaming never changes the course
+        code, so a course group can be renamed freely."""
         if group_name == "General":
             messagebox.showwarning("Edit Group", "The default 'General' group cannot be edited.")
             return
@@ -802,26 +814,9 @@ class AppController:
         group_name_entry.insert(0, group_name)
         group_name_entry.focus()
         group_name_entry.select_range(0, 'end')
-
-        has_tasks_var = ctk.StringVar(value="on" if target_group.has_tasks else "off")
-        has_tasks_checkbox = ctk.CTkCheckBox(
-            dialog,
-            text="This course has tasks",
-            variable=has_tasks_var,
-            onvalue="on",
-            offvalue="off",
-        )
-        has_tasks_checkbox.pack(pady=(5, 5), padx=20, anchor="w")
-
-        has_oa_var = ctk.StringVar(value="on" if target_group.has_objective_assessment else "off")
-        has_oa_checkbox = ctk.CTkCheckBox(
-            dialog,
-            text="This course has an objective assessment",
-            variable=has_oa_var,
-            onvalue="on",
-            offvalue="off",
-        )
-        has_oa_checkbox.pack(pady=(0, 10), padx=20, anchor="w")
+        ctk.CTkLabel(
+            dialog, text="Course settings are in ⚙ Settings.", text_color=("gray40", "gray60"),
+        ).pack(padx=20, anchor="w")
 
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=(15, 10), padx=20, fill="x")
@@ -844,8 +839,6 @@ class AppController:
                 return
 
             target_group.name = new_name
-            target_group.has_tasks = has_tasks_var.get() == "on"
-            target_group.has_objective_assessment = has_oa_var.get() == "on"
             self.group_repo.save_groups(self.groups)
 
             if self.nav_panel:
@@ -1190,6 +1183,11 @@ class AppController:
         )
 
     # region Background runs
+    def _find_group_by_id(self, group_id: str) -> Optional[Group]:
+        """By ID, never by name (names can change) - used by ActionRunner to
+        find an action's course settings."""
+        return next((g for g in self.groups if g.id == group_id), None)
+
     def _caseload_missing_and_told_user(self) -> bool:
         """True (after explaining) if the roster isn't loaded - e.g. the
         Salesforce login failed or was skipped at startup. Only RUNNING

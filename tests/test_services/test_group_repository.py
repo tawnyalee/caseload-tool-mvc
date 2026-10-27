@@ -47,3 +47,40 @@ def test_add_group_sets_has_tasks_and_has_objective_assessment(temp_group_repo: 
     loaded_groups = temp_group_repo.load_groups()
     assert loaded_groups[0].has_tasks is True
     assert loaded_groups[0].has_objective_assessment is True
+
+# --- Course settings (2026-10-27) --------------------------------------------
+
+import json as _json
+
+
+def test_groups_saved_before_course_settings_become_courses_if_they_had_tasks_or_an_oa(tmp_path):
+    path = tmp_path / "groups.json"
+    path.write_text(_json.dumps([
+        {"id": "1", "name": "D424", "has_tasks": True, "has_objective_assessment": False},
+        {"id": "2", "name": "C960", "has_tasks": False, "has_objective_assessment": True},
+        {"id": "3", "name": "Test Group", "has_tasks": False, "has_objective_assessment": False},
+    ]), encoding="utf-8")
+
+    groups = {g.name: g for g in GroupRepository(data_file=path).load_groups()}
+
+    assert (groups["D424"].is_course, groups["D424"].course_code) == (True, "D424")
+    assert (groups["C960"].is_course, groups["C960"].course_code) == (True, "C960")
+    assert (groups["Test Group"].is_course, groups["Test Group"].scoped_course_code) == (False, "")
+
+
+def test_course_settings_round_trip(tmp_path):
+    repo = GroupRepository(data_file=tmp_path / "groups.json")
+    group = Group(name="Capstone", is_course=True, course_code="D424", task_count=5,
+                  has_tasks=True, has_objective_assessment=True)
+    repo.save_groups([group])
+
+    loaded = repo.load_groups()[0]
+
+    assert (loaded.is_course, loaded.course_code, loaded.task_count) == (True, "D424", 5)
+    assert (loaded.has_tasks, loaded.has_objective_assessment) == (True, True)
+
+
+def test_an_explicitly_unmarked_group_stays_unmarked_even_with_tasks(tmp_path):
+    path = tmp_path / "groups.json"
+    path.write_text(_json.dumps([{"id": "1", "name": "D424", "has_tasks": True, "is_course": False}]), encoding="utf-8")
+    assert GroupRepository(data_file=path).load_groups()[0].is_course is False

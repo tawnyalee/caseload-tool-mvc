@@ -49,10 +49,11 @@ Your account and signature will still be there. **Open Outlook (classic) before 
 
 ### Groups
 
-A **group** is one course, named by its course code (for example **D424**). Pick it from the **Scenario Groups** dropdown on the left. **An Action in a course group only ever reaches students in that course** — you don't need a course filter. Put an Action in **General** if it should reach students in every course.
+A **group** is usually one course. Pick it from the **Scenario Groups** dropdown on the left. **An Action in a course group only ever reaches students in that course** — you don't need a course filter. A group that isn't a course (and **General**) reaches students in every course.
 
-- **+ Add Group** creates one.
-- **📝 Edit Group** renames it and sets whether the course has tasks or an objective assessment.
+- **+ Add Group** creates one. Leave **This group is a course** checked and name it by its course code (for example **D424**).
+- **📝 Edit Group** renames it. Renaming never changes the course it's for.
+- **⚙ Settings → Courses** sets each group's details: whether it's a course, its **course code**, whether it **has tasks** and **how many**, and whether it **has an objective assessment** (a course can have tasks, an OA, or both). Click **💾 Save Settings** when done.
 - **❌ Delete** removes it **and all of its Actions** (you'll be asked to confirm).
 - **General** is always there and can't be renamed or deleted.
 
@@ -125,7 +126,7 @@ The day's log is a backup if you close that window by accident (see "Your data a
 
 ## Texting
 
-Texting through Mongoose isn't available yet. If an Action has **Send Text** checked, each text shows as **failed** with "Texting isn't set up in this app yet — no text was sent." Nothing is texted. **⬇ Sync Texting IDs**, **↻ Restart Browser**, and **⚙ Settings** are placeholders for upcoming features.
+Texting through Mongoose isn't available yet. If an Action has **Send Text** checked, each text shows as **failed** with "Texting isn't set up in this app yet — no text was sent." Nothing is texted. **⬇ Sync Texting IDs** and **↻ Restart Browser** are placeholders for upcoming features.
 
 ## Test mode
 

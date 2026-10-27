@@ -483,9 +483,10 @@ def test_run_welcome_emails_aggregates_across_groups(tmp_path):
     action_b = _make_action(template.id, is_text=False, has_note=False)
     action_b.id = "ACT-B"
 
+    action_b.group_id = "G2"
     groups = [
-        Group(name="D424", group_id="G1", welcome_action_id="ACT-A"),
-        Group(name="D425", group_id="G2", welcome_action_id="ACT-B"),
+        Group(name="D424", group_id="G1", welcome_action_id="ACT-A", is_course=True, course_code="D424"),
+        Group(name="D425", group_id="G2", welcome_action_id="ACT-B", is_course=True, course_code="D425"),
         Group(name="No Welcome Set", group_id="G3", welcome_action_id=None),
         Group(name="Dangling Reference", group_id="G4", welcome_action_id="ACT-MISSING"),
     ]
@@ -500,6 +501,7 @@ def test_run_welcome_emails_aggregates_across_groups(tmp_path):
         note_writer=FakeNoteWriter(),
         template_repo=template_repo,
         activity_logger=ActivityLogger(log_dir=str(tmp_path / "logs")),
+        group_lookup={g.id: g for g in groups}.get,
     )
 
     summary = runner.run_welcome_emails(groups, actions_by_id)
@@ -835,21 +837,39 @@ def test_batch_reports_outlook_not_open_per_action_instead_of_crashing(tmp_path)
 
 
 # --- An action in a course group only reaches that course's students -------
+# _make_action puts every action in group "G1".
+
+def _course_groups(**by_id):
+    return lambda group_id: by_id.get(group_id)
+
 
 def test_course_group_limits_the_run_to_that_courses_students(tmp_path):
     students = _make_students(course_code="D424")
     students[2].course_code = "E210"  # Amy is in a different course
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    runner.group_lookup = _course_groups(G1=Group(name="Capstone", group_id="G1", is_course=True, course_code="D424"))
 
-    runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="D424")
+    runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="Capstone")
 
     assert [s["to"] for s in email_sender.sent] == ["jane@example.test", "john@example.test"]
 
 
-def test_general_group_still_reaches_every_course(tmp_path):
+def test_a_group_that_is_not_a_course_reaches_every_course(tmp_path):
     students = _make_students(course_code="D424")
     students[2].course_code = "E210"
     runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    runner.group_lookup = _course_groups(G1=Group(name="Weekly reminders", group_id="G1", is_course=False))
+
+    runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="Weekly reminders")
+
+    assert len(email_sender.sent) == 3
+
+
+def test_an_action_whose_group_no_longer_exists_reaches_every_course(tmp_path):
+    students = _make_students(course_code="D424")
+    students[2].course_code = "E210"
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    runner.group_lookup = _course_groups()  # G1 was deleted
 
     runner.run(_make_action(template.id, is_text=False, has_note=False), group_name="General")
 
@@ -859,14 +879,28 @@ def test_general_group_still_reaches_every_course(tmp_path):
 def test_course_match_ignores_case_and_spaces(tmp_path):
     students = _make_students(course_code=" d424 ")
     runner, template, *_ = _make_runner(tmp_path, students)
-    assert len(runner.get_matching_students(_make_action(template.id), "D424")) == 3
+    runner.group_lookup = _course_groups(G1=Group(name="D424", group_id="G1", is_course=True, course_code="D424"))
+    assert len(runner.get_matching_students(_make_action(template.id))) == 3
 
 
 def test_review_list_uses_the_same_course_rule_as_the_run(tmp_path):
     students = _make_students(course_code="D424")
     students[0].course_code = "C769"
     runner, template, *_ = _make_runner(tmp_path, students)
+    runner.group_lookup = _course_groups(G1=Group(name="D424", group_id="G1", is_course=True, course_code="D424"))
 
-    matches = runner.get_matching_students(_make_action(template.id), "D424")
+    matches = runner.get_matching_students(_make_action(template.id))
 
     assert [s.salesforce_id for s in matches] == ["SF2", "SF3"]
+
+
+def test_note_is_labeled_with_the_course_groups_code(tmp_path):
+    students = _make_students(course_code="d424")  # roster spells it differently
+    received = []
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+    runner.group_lookup = _course_groups(G1=Group(name="Capstone", group_id="G1", is_course=True, course_code="D424"))
+
+    runner.run(_make_action(template.id), group_name="Capstone")
+
+    assert "course_code='D424'" in "\n".join(received)
