@@ -63,7 +63,7 @@ A **group** is usually one course. Pick it from the **Scenario Groups** dropdown
 An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add Action**, or **Edit** next to an existing one:
 
 1. **Action Name** — what you'll see in the list.
-2. **Select Communication Method(s)** — check **Send Email**. (Texting isn't available yet; see below.)
+2. **Select Communication Method(s)** — check **Send Email**, **Send Text**, or both. (Texting is new; see "Texting" below.)
 3. **Email Details** — the subject, your **Outlook signature**, and the email body (choose a template, or create one with **➕ New**).
 4. **Select Filters for Roster** — **➕ Add Filter Rule** narrows who it goes to (course, task status, dates, momentum, and more). With no filters, it goes to everyone in the group's course (or your whole caseload, for an Action in General).
 5. **Note Details** — what to record in Salesforce after the email is sent: the note subject and body, plus an optional **follow-up note** for the roster view. These fields are only available when Send Email is checked.
@@ -128,14 +128,26 @@ The day's log is a backup if you close that window by accident (see "Your data a
 
 ## Texting
 
-Texting through Mongoose isn't available yet. If an Action has **Send Text** checked, each text shows as **failed** with "Texting isn't set up in this app yet — no text was sent." Nothing is texted. **⬇ Sync Texting IDs** and **↻ Restart Browser** are placeholders for upcoming features.
+Texting is **new and still being tested**. When an Action has **Send Text** checked, the app schedules each text in **Mongoose**:
+
+- A Mongoose window opens for the run. Log in if Mongoose asks; usually it remembers you.
+- Each text goes out from the **department matching the student's course** (for example D424), so it lands in the right shared inbox.
+- Each one is **scheduled**, never sent instantly: for the next time between **10 AM and 8 PM in the student's own time zone**.
+- **For now, you finish each text yourself.** The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.
+- The **Text Subject** becomes the text's **Message Name** in Mongoose. Fields like **{{student_name}}** work in the text and its subject.
+- A text longer than about 160 characters may arrive in parts; the log warns you.
+- A student is **skipped and listed** in the results when the app can't place them safely: no texting ID (try **↻ Refresh Caseload**), no time zone, or not found in that course's Mongoose department (for example, they opted out). Text those students by hand if needed.
+- Texts never write a Salesforce note — Mongoose notes them itself.
+
+**⬇ Sync Texting IDs** and **↻ Restart Browser** are placeholders and do nothing yet.
 
 ## Test mode
 
-Test mode lets you try everything on your real caseload **without emailing any student or writing to Salesforce**:
+Test mode lets you try everything on your real caseload **without emailing or texting any student or writing to Salesforce**:
 
 - Every email goes to **one address you choose**, with the student it was meant for shown at the top, so you can check names and personalization.
 - Notes are **not** written to Salesforce.
+- Texts are filled in inside Mongoose and then **thrown away** — nothing is scheduled, so no student gets a text.
 - A **yellow TEST MODE bar** stays across the top of the app.
 
 **To turn it on:** in the data folder (below), create a file named **test_mode.json** containing exactly this, with your own email address:

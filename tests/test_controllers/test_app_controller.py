@@ -32,7 +32,7 @@ from unittest.mock import ANY
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter
-from src.services.text_sender import UnavailableTextSender
+from src.services.mongoose_text_sender import DRY_RUN, REVIEW, MongooseTextSender
 
 
 
@@ -652,8 +652,9 @@ def test_without_test_mode_file_email_is_real_outlook_and_notes_are_real(mock_ct
     assert isinstance(controller.email_sender, OutlookEmailSender)
     assert isinstance(controller.note_writer, PlaywrightNoteWriter)
     assert controller.action_runner.email_sender is controller.email_sender
-    # Never the fake that reports texts as sent - see UnavailableTextSender.
-    assert isinstance(controller.text_sender, UnavailableTextSender)
+    # Live texts wait for the professor to click Schedule in Mongoose.
+    assert isinstance(controller.text_sender, MongooseTextSender)
+    assert controller.text_sender.mode == REVIEW
 
 
 @patch.object(AppController, "_refresh_caseload_at_startup")
@@ -672,6 +673,8 @@ def test_test_mode_file_redirects_email_and_fakes_notes(mock_ctk, mock_init_view
     assert isinstance(controller.note_writer, TestModeNoteWriter)
     assert controller.action_runner.email_sender is controller.email_sender
     assert controller.action_runner.note_writer is controller.note_writer
+    # Test mode never schedules a text: it fills each one in and throws it away.
+    assert controller.text_sender.mode == DRY_RUN
 
 
 # --- Salesforce login (in memory, asked for every launch) -------------------

@@ -20,7 +20,7 @@ from src.services.student_data_provider import (
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services import app_paths
 from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter, load_redirect_email
-from src.services.text_sender import UnavailableTextSender
+from src.services.mongoose_text_sender import DRY_RUN, REVIEW, MongooseTextSender
 from src.services.note_writer import PlaywrightNoteWriter
 from src.services import salesforce_browser_session
 from src.services.salesforce_callbacks import (
@@ -131,9 +131,10 @@ class AppController:
         self.email_sender = OutlookEmailSender()
         if self.test_mode:
             self.email_sender = RedirectingEmailSender(self.email_sender, self.test_mode_redirect)
-        # Not FakeTextSender: that one reports every text as sent. Until real
-        # Mongoose texting exists, a text step must show as failed.
-        self.text_sender = UnavailableTextSender()
+        # Real Mongoose texting (2026-10-28). Test mode fills each text in and
+        # throws it away; live, each one waits for the professor to click
+        # Schedule in the Mongoose window until they choose to automate it.
+        self.text_sender = MongooseTextSender(mode=DRY_RUN if self.test_mode else REVIEW)
 
         # Confirmed working end-to-end against production Salesforce (see
         # src/CLAUDE.md's Salesforce integration plan). Construction never

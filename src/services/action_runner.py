@@ -37,7 +37,7 @@ from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
 from src.services.task_utils import is_latest_task_passed
-from src.services.text_sender import TextSender
+from src.services.text_sender import TextSender, TextSkipped
 
 
 class RunControl:
@@ -67,6 +67,8 @@ class RunControl:
 
 
 STOPPED_DETAIL = "Run was stopped before this student"
+# Characters in one standard text message; longer ones may arrive in parts.
+SINGLE_TEXT_LENGTH = 160
 
 def in_group_course(student: Student, course_code: str) -> bool:
     """An action in a COURSE group only reaches students in that course
@@ -217,6 +219,14 @@ class ActionRunner:
         self.activity_logger.log(f"'{action.name}' is currently running for {len(students)} students")
         if action.is_email and students:
             self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
+        texting = action.is_text and bool(students)
+        if texting:
+            if len(action.text_body) > SINGLE_TEXT_LENGTH:
+                self.activity_logger.log(
+                    f"[TEXT LENGTH] The text is {len(action.text_body)} characters before personalizing "
+                    f"(one text holds about {SINGLE_TEXT_LENGTH}); it may arrive in parts"
+                )
+            self.text_sender.ensure_ready()  # e.g. log in to Mongoose once, before the first student
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         # Only email gets a note: Mongoose writes its own note for every text
         # at the end of the day, so a text-only action never writes one here.
@@ -226,40 +236,43 @@ class ActionRunner:
                 "Note step not run — this action doesn't send email, and texts are noted automatically by Mongoose"
             )
         summary = ActionRunSummary()
+        try:
+            for position, student in enumerate(students, start=1):
+                if self._stopped(control, students[position - 1:], summary):
+                    break
+                if control:
+                    control.report(position, len(students), student.full_name)
+                self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
+                email_ok = False
 
-        for position, student in enumerate(students, start=1):
-            if self._stopped(control, students[position - 1:], summary):
-                break
-            if control:
-                control.report(position, len(students), student.full_name)
-            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
-            email_ok = False
+                if action.is_email:
+                    result = self._attempt_email(
+                        student, action, template,
+                        subject_override=email_subject_override, body_override=email_body_override,
+                    )
+                    summary.results.append(result)
+                    email_ok = result.outcome == "success"
 
-            if action.is_email:
-                result = self._attempt_email(
-                    student, action, template,
-                    subject_override=email_subject_override, body_override=email_body_override,
-                )
-                summary.results.append(result)
-                email_ok = result.outcome == "success"
+                if action.is_text:
+                    summary.results.append(self._attempt_text(student, action))
 
-            if action.is_text:
-                summary.results.append(self._attempt_text(student, action))
-
-            if writes_note:
-                if email_ok:
-                    summary.results.append(
-                        self._attempt_note(
-                            student, action.note_subject, action.note_body, action.follow_up_note,
-                            course_code=course_code,
+                if writes_note:
+                    if email_ok:
+                        summary.results.append(
+                            self._attempt_note(
+                                student, action.note_subject, action.note_body, action.follow_up_note,
+                                course_code=course_code,
+                            )
                         )
-                    )
-                else:
-                    detail = "Email was not sent successfully"
-                    self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
-                    summary.results.append(
-                        StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
-                    )
+                    else:
+                        detail = "Email was not sent successfully"
+                        self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                        summary.results.append(
+                            StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
+                        )
+        finally:
+            if texting:
+                self.text_sender.finish()
 
         self.activity_logger.log(
             f"Run complete — {summary.succeeded} succeeded, {summary.failed} failed, {summary.skipped} skipped"
@@ -484,12 +497,19 @@ class ActionRunner:
             return StepResult(student=student, step_type="email", outcome="failed", detail=str(exc))
 
     def _attempt_text(self, student: Student, action: Action) -> StepResult:
+        # The action's text subject is the platform's label for the text
+        # (Mongoose's "Message Name"); merge fields work in both.
+        body = render_merge_fields(action.text_body, student)
+        message_name = render_merge_fields(action.text_subject, student) or action.name
         try:
-            self.text_sender.send(to_phone=student.phone, subject=action.text_subject, body=action.text_body)
-            self.activity_logger.log(f"[TEXT] Sent to {student.full_name} <{student.phone}>")
+            what = self.text_sender.send(student, body, message_name)
+            self.activity_logger.log(f"[TEXT] {what} - {student.full_name}")
             return StepResult(student=student, step_type="text", outcome="success")
+        except TextSkipped as exc:
+            self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {exc}")
+            return StepResult(student=student, step_type="text", outcome="skipped", detail=str(exc))
         except Exception as exc:
-            self.activity_logger.log(f"[TEXT FAILED] {student.full_name} <{student.phone}>: {exc}")
+            self.activity_logger.log(f"[TEXT FAILED] {student.full_name}: {exc}")
             return StepResult(student=student, step_type="text", outcome="failed", detail=str(exc))
 
     def _attempt_note(

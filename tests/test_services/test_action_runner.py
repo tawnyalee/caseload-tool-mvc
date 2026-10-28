@@ -11,7 +11,7 @@ from src.services.note_writer import FakeNoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
 from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter
-from src.services.text_sender import FakeTextSender
+from src.services.text_sender import FakeTextSender, TextSkipped
 
 
 class _StaticStudentProvider(StudentDataProvider):
@@ -1045,3 +1045,88 @@ def test_merge_fields_are_filled_in_notes_and_follow_up_notes(tmp_path):
 
     assert note_writer.written[0]["subject"] == "Congrats on Task 2"
     assert note_writer.follow_up_notes["SF1"] == "Task 2 tips sent"
+
+
+# --- Texts (Mongoose, 2026-10-28) -------------------------------------------
+
+class _TrackingTextSender(FakeTextSender):
+    """Counts the once-per-run hooks; `skip_for`/`explode_for` by phone."""
+
+    def __init__(self, skip_for=(), explode_for=()):
+        super().__init__()
+        self.skip_for, self.explode_for = set(skip_for), set(explode_for)
+        self.ready_calls = self.finish_calls = 0
+
+    def ensure_ready(self):
+        self.ready_calls += 1
+
+    def finish(self):
+        self.finish_calls += 1
+
+    def send(self, student, body, message_name):
+        if student.phone in self.skip_for:
+            raise TextSkipped("Not found in this Mongoose department")
+        if student.phone in self.explode_for:
+            raise KeyboardInterrupt  # something that escapes the per-student handling
+        return super().send(student, body, message_name)
+
+
+def _text_only_action(template_id, body="Hi {{student_name}}", subject="{{course_code}} check-in"):
+    action = _make_action(template_id, is_email=False, has_note=False)
+    action.text_body, action.text_subject = body, subject
+    return action
+
+
+def test_texts_get_merge_fields_and_the_subject_becomes_the_message_name(tmp_path):
+    students = _make_students(course_code="D424")[:1]
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.text_sender = sender = _TrackingTextSender()
+
+    runner.run(_text_only_action(template.id), group_name="General")
+
+    assert sender.sent == [{"to": "555-0001", "subject": "D424 check-in", "body": "Hi Jane Doe"}]
+
+
+def test_a_text_the_sender_skips_is_listed_as_skipped_not_failed(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.text_sender = _TrackingTextSender(skip_for={"555-0002"})
+
+    summary = runner.run(_text_only_action(template.id), group_name="General")
+
+    assert (summary.succeeded, summary.failed, summary.skipped) == (2, 0, 1)
+    skipped = [r for r in summary.results if r.outcome == "skipped"][0]
+    assert skipped.student.salesforce_id == "SF2" and "Mongoose" in skipped.detail
+
+
+def test_texting_logs_in_once_per_run_and_always_closes_the_window(tmp_path):
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.text_sender = sender = _TrackingTextSender(explode_for={"555-0002"})
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(_text_only_action(template.id), group_name="General")
+
+    assert (sender.ready_calls, sender.finish_calls) == (1, 1)
+
+
+def test_no_texting_window_when_nobody_matches_or_the_action_has_no_text(tmp_path):
+    runner, template, *_ = _make_runner(tmp_path, [])
+    runner.text_sender = sender = _TrackingTextSender()
+    runner.run(_text_only_action(template.id), group_name="General")
+
+    runner2, template2, *_ = _make_runner(tmp_path, _make_students())
+    runner2.text_sender = sender2 = _TrackingTextSender()
+    runner2.run(_make_action(template2.id, is_text=False), group_name="General")
+
+    assert sender.ready_calls == sender2.ready_calls == 0
+
+
+def test_a_long_text_is_flagged_in_the_log(tmp_path):
+    received = []
+    runner, template, *_ = _make_runner(tmp_path, _make_students()[:1])
+    runner.activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+
+    runner.run(_text_only_action(template.id, body="x" * 200), group_name="General")
+
+    assert any("[TEXT LENGTH] The text is 200 characters" in line for line in received)
