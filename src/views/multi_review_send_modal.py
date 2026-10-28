@@ -127,6 +127,7 @@ class MultiReviewSendModal(ctk.CTkToplevel):
             messagebox.showwarning("No Students Selected", "Select at least one student, or Cancel.")
             return
 
+        # Close first; see ReviewSendModal._on_send for why.
+        self.destroy()
         if self.on_confirm:
             self.on_confirm(selections)
-        self.destroy()

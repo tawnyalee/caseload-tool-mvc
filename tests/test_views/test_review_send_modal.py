@@ -132,6 +132,24 @@ def test_send_calls_on_confirm_with_selected_ids_and_edited_email_content(ctk_ro
     assert "Original" in body
 
 
+def test_send_closes_the_dialog_before_on_confirm_runs(ctk_root):
+    """Regression test (found live 2026-10-28): on_confirm opens the run's
+    progress window. CustomTkinter remembers the focused widget (the Send
+    button) when a new window opens and re-focuses it 10 ms later; if this
+    dialog closed after on_confirm, that widget was gone and the professor
+    saw "Something went wrong: bad window path name". Closing first means
+    no widget of this dialog can be remembered."""
+    still_open_during_confirm = []
+    modal = ReviewSendModal(
+        master=ctk_root, title="Run 'X'", students=_students(), is_email=False,
+        on_confirm=lambda ids, subject, body: still_open_during_confirm.append(bool(modal.winfo_exists())),
+    )
+
+    modal._on_send()
+
+    assert still_open_during_confirm == [False]
+
+
 def test_non_email_dialog_has_no_subject_or_body_fields(ctk_root):
     modal = ReviewSendModal(master=ctk_root, title="Run 'Text Only'", students=_students(), is_email=False)
 

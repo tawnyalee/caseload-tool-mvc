@@ -96,3 +96,18 @@ def test_confirm_calls_on_confirm_with_a_selections_dict_keyed_by_item(ctk_root)
 
     assert len(confirmed) == 1
     assert confirmed[0] == {"G1": {"SF1"}, "G2": set()}
+
+
+def test_confirm_closes_the_dialog_before_on_confirm_runs(ctk_root):
+    """Same regression as ReviewSendModal's: on_confirm opens the progress
+    window, which would try to re-focus a button of this (by then closed)
+    dialog."""
+    still_open_during_confirm = []
+    modal = MultiReviewSendModal(
+        master=ctk_root, title="Run Batch", items=_items(),
+        on_confirm=lambda s: still_open_during_confirm.append(bool(modal.winfo_exists())),
+    )
+
+    modal._on_confirm()
+
+    assert still_open_during_confirm == [False]

@@ -200,9 +200,10 @@ class BatchRunModal(ctk.CTkToplevel):
             return
         selected_actions = [self._actions_by_id[aid] for aid in self._selected_ids]
         group_names = [self._group_name_by_id.get(a.group_id, "") for a in selected_actions]
+        # Close first; see ReviewSendModal._on_send for why.
+        self.destroy()
         if self._on_run:
             self._on_run(selected_actions, group_names)
-        self.destroy()
 
     # --- Saved Batches ---------------------------------------------------
 

@@ -115,6 +115,23 @@ def test_run_calls_on_run_with_actions_and_group_names_in_selected_order(ctk_roo
     assert run_group_names == ["D370", "D424"]
 
 
+def test_run_closes_the_picker_before_on_run_runs(ctk_root):
+    """Same regression as ReviewSendModal's: on_run opens the batch review
+    window, which would try to re-focus a button of this (by then closed)
+    picker."""
+    actions, groups = _make_actions_and_groups()
+    still_open_during_run = []
+    modal = BatchRunModal(
+        master=ctk_root, actions=actions, groups=groups,
+        on_run=lambda a, g: still_open_during_run.append(bool(modal.winfo_exists())),
+    )
+    modal._selected_ids = ["A1"]
+
+    modal._handle_run_clicked()
+
+    assert still_open_during_run == [False]
+
+
 # --- Saved Batches ---------------------------------------------------------
 
 def test_saved_batch_menu_shows_placeholder_when_none_saved(ctk_root):

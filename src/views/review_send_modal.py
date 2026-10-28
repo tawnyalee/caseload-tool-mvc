@@ -135,6 +135,9 @@ class ReviewSendModal(ctk.CTkToplevel):
         subject = self.subject_entry.get() if self.subject_entry else ""
         body = rt.extract_html(self.body_text, self._link_urls) if self.body_text else ""
 
+        # Close before on_confirm: it opens the progress window, and
+        # CustomTkinter re-focuses the previously focused widget (our Send
+        # button) 10 ms later - a TclError if this dialog closed in between.
+        self.destroy()
         if self.on_confirm:
             self.on_confirm(selected_ids, subject, body)
-        self.destroy()
