@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from src.models.student import Student
+from src.services.caseload_grid import ContactIdReport, GridCapture, apply_contact_ids
 from src.services.csv_student_import import parse_students_csv
 from src.services.salesforce_browser_session import (
     EXPIRED_MESSAGE,
@@ -115,10 +116,17 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
     `python -m playwright codegen <report_url>` and recording yourself
     clicking Export - copy the resulting selector in here."""
 
+    # How long to keep waiting, after the CSV download, for the page's grid
+    # data to finish arriving (it comes in ~100-row chunks; see
+    # caseload_grid.py). Tests shorten it.
+    grid_wait_ms = 15_000
+
     def __init__(self, report_url: str, export_button_selector: str, headless: bool = True):
         self.report_url = report_url
         self.export_button_selector = export_button_selector
         self.headless = headless
+        # What the last load found out about texting IDs, for the log.
+        self.last_contact_id_report: Optional[ContactIdReport] = None
 
     def get_students(self) -> List[Student]:
         import shutil
@@ -127,6 +135,8 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
 
         with sync_playwright() as playwright:
             context = open_authenticated_context(playwright, headless=self.headless)
+            grid = GridCapture()
+            context.on("response", grid.on_response)
             try:
                 page = context.new_page()
                 page.goto(self.report_url)
@@ -150,9 +160,13 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
                 try:
                     csv_path = csv_dir / download.suggested_filename
                     download.save_as(str(csv_path))
-                    return parse_students_csv(csv_path)
+                    students = parse_students_csv(csv_path)
                 finally:
                     shutil.rmtree(csv_dir, ignore_errors=True)
+
+                grid.wait_until_complete(page, self.grid_wait_ms)
+                self.last_contact_id_report = apply_contact_ids(students, grid)
+                return students
             finally:
                 context.browser.close()
 
@@ -190,6 +204,12 @@ class CachingStudentDataProvider(StudentDataProvider):
         """Whether a roster has been fetched this session (False e.g. when
         Salesforce login failed at startup)."""
         return self._cache is not None
+
+    @property
+    def contact_id_report(self) -> Optional[ContactIdReport]:
+        """The wrapped provider's texting-ID report from its last load, if it
+        makes one (only the live Salesforce provider does)."""
+        return getattr(self._real_provider, "last_contact_id_report", None)
 
     def refresh(self) -> List[Student]:
         """Forces a fresh fetch from the wrapped provider, replacing

@@ -233,9 +233,17 @@ class AppController:
         try:
             students = self._load_caseload_logging_in_if_needed()
             self.activity_logger.log(f"Caseload loaded at startup: {len(students)} students")
+            self._log_contact_id_report()
         except Exception as exc:
             self.activity_logger.log(f"[CASELOAD NOT LOADED AT STARTUP] {exc}")
             self._startup_problem = f"The caseload couldn't be loaded:\n\n{exc}"
+
+    def _log_contact_id_report(self) -> None:
+        """Logs how many students texting can find (see caseload_grid.py)."""
+        report = getattr(self.student_data_provider, "contact_id_report", None)
+        if report is not None:
+            for line in report.log_lines():
+                self.activity_logger.log(line)
 
     def _log_in_to_salesforce(self) -> None:
         """Opens the visible login window and waits for the professor to log
@@ -1126,6 +1134,7 @@ class AppController:
 
         def _done(students):
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
+            self._log_contact_id_report()
             messagebox.showinfo("Refresh Caseload", f"↻ Caseload refreshed — {len(students)} students loaded.")
 
         def _failed(exc):

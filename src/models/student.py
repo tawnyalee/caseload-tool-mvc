@@ -85,6 +85,13 @@ class Student:
     # not part of SALESFORCE_FIELD_MAP below since it has no source field.
     latest_task_number: Optional[int] = None
 
+    # How the texting platform (Mongoose) finds this student: its recipient
+    # search matches this ID exactly, unlike a name. Today it's the Salesforce
+    # Contact Id ("003..."), which the Salesforce adapter reads from the
+    # Caseload page's own grid data - it isn't in the CSV export, so it's not
+    # in SALESFORCE_FIELD_MAP either. Blank = not known; texting skips them.
+    texting_contact_id: str = ""
+
     # snake_case attribute name -> raw column name from the caseload export
     # (which mirrors the underlying Salesforce field/API names). Kept so a
     # real Salesforce read/write adapter, built later, knows exactly which

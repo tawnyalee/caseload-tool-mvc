@@ -143,6 +143,12 @@ def test_csv_provider_computes_latest_task_number(tmp_path):
     assert students[0].latest_task_number == 2
 
 
+@pytest.fixture(autouse=True)
+def _short_grid_wait(monkeypatch):
+    """Most test pages send no grid data; don't wait the real 15 s for it."""
+    monkeypatch.setattr(PlaywrightStudentDataProvider, "grid_wait_ms", 300)
+
+
 _EXPORT_PAGE_HTML = """<!DOCTYPE html>
 <html><body>
 <button id="export-btn" onclick="downloadCsv()">Export</button>
@@ -182,6 +188,54 @@ def test_playwright_provider_downloads_and_parses_the_exported_csv(tmp_path, mon
     assert students[0].salesforce_id == "SF1"
     assert students[0].course_code == "D424"
     assert students[0].full_name == "Jane Doe"
+
+
+def test_playwright_provider_keeps_each_students_texting_id_from_the_pages_grid_data(tmp_path, monkeypatch):
+    """The real Caseload page fetches its rows (with each Contact Id) from
+    getCaseLoadMainGridData in ~100-row chunks; the CSV export doesn't
+    include the Contact Id. Served over local HTTP so the page's fetch()
+    calls work, sending two chunks like the real page."""
+    import functools
+    import http.server
+    import threading
+
+    monkeypatch.setattr(sbs, "_session_state", {"cookies": [], "origins": []})
+    csv_content = (
+        "StudentID,StudentEmail,Name,CourseCode\n"
+        "SF1,jane@example.test,Jane Doe,D424\nSF2,john@example.test,John Roe,D424\n"
+    )
+
+    def chunk(student_id, contact_id):
+        row = {"StudentID": student_id, "CourseCode": "D424", "contactID": contact_id, "CaseloadTotalRows": 2}
+        return json.dumps({"actions": [{"state": "SUCCESS", "returnValue": [row]}]})
+
+    (tmp_path / "chunk1-getCaseLoadMainGridData.json").write_text(chunk("SF1", "003JANE"), encoding="utf-8")
+    (tmp_path / "chunk2-getCaseLoadMainGridData.json").write_text(chunk("SF2", "003JOHN"), encoding="utf-8")
+    page_html = _EXPORT_PAGE_HTML.format(csv_js_string=json.dumps(csv_content)).replace(
+        "</body>",
+        "<script>fetch('chunk1-getCaseLoadMainGridData.json');"
+        "setTimeout(() => fetch('chunk2-getCaseLoadMainGridData.json'), 300);</script></body>",
+    )
+    (tmp_path / "report.html").write_text(page_html, encoding="utf-8")
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    handler.log_message = lambda *args: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        provider = PlaywrightStudentDataProvider(
+            report_url=f"http://127.0.0.1:{server.server_port}/report.html",
+            export_button_selector="#export-btn",
+            headless=True,
+        )
+        provider.grid_wait_ms = 5_000
+        students = provider.get_students()
+    finally:
+        server.shutdown()
+
+    assert {s.salesforce_id: s.texting_contact_id for s in students} == {"SF1": "003JANE", "SF2": "003JOHN"}
+    assert provider.last_contact_id_report.with_contact_id == 2
+    assert not provider.last_contact_id_report.grid_incomplete
 
 
 def test_playwright_provider_raises_a_clear_error_when_not_logged_in(tmp_path, monkeypatch):
