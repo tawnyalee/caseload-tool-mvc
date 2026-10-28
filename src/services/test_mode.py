@@ -27,6 +27,7 @@ from typing import Optional
 
 from src.services import app_paths
 from src.services.email_sender import EmailSender
+from src.services.note_writer import FakeNoteWriter
 
 
 # Sentinel for "file exists but has no usable address" - test mode stays on.
@@ -59,6 +60,9 @@ class RedirectingEmailSender(EmailSender):
     def ensure_ready(self) -> None:
         self.inner.ensure_ready()
 
+    def describe_sent(self, recipient: str) -> str:
+        return f"TEST MODE - sent to {self.redirect_to} instead of {recipient}"
+
     def send(self, to_email: str, subject: str, body: str, signature: str = "") -> None:
         # Same failures as a real send would hit, so test runs report them too.
         if not to_email:
@@ -72,3 +76,13 @@ class RedirectingEmailSender(EmailSender):
             f"<b>TEST MODE</b> - this email would have been sent to <b>{html.escape(to_email)}</b></p>"
         )
         self.inner.send(self.redirect_to, f"[TEST -> {to_email}] {subject}", banner + body, signature)
+
+
+class TestModeNoteWriter(FakeNoteWriter):
+    """The fake note writer, with log wording that says nothing reached
+    Salesforce (before 2026-10-28 the log said "[NOTE] Written for ...",
+    which read as if a real note had been saved)."""
+    __test__ = False  # not a pytest test class, despite the name
+
+    def describe_written(self, student_name: str) -> str:
+        return f"TEST MODE - not written to Salesforce for {student_name}"

@@ -19,9 +19,9 @@ from src.services.student_data_provider import (
 )
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services import app_paths
-from src.services.test_mode import RedirectingEmailSender, load_redirect_email
+from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter, load_redirect_email
 from src.services.text_sender import UnavailableTextSender
-from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
+from src.services.note_writer import PlaywrightNoteWriter
 from src.services import salesforce_browser_session
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
@@ -147,7 +147,7 @@ class AppController:
             update_follow_up_fn=update_follow_up_fn,
         )
         if self.test_mode:
-            self.note_writer = FakeNoteWriter()
+            self.note_writer = TestModeNoteWriter()
             self.activity_logger.log(
                 f"TEST MODE ON - all email goes to {self.test_mode_redirect or '(no valid address - sends will fail)'}; "
                 f"notes are not written to Salesforce. Delete {self.test_mode_file} to go live."

@@ -31,6 +31,11 @@ class NoteWriter(ABC):
         (e.g. 'Sent welcome email'). Raises an exception if it fails."""
         raise NotImplementedError
 
+    def describe_written(self, student_name: str) -> str:
+        """The log wording for a successful note step. Test mode overrides
+        it, since nothing reaches Salesforce."""
+        return f"Written for {student_name}"
+
 
 class FakeNoteWriter(NoteWriter):
     """Records every write_note()/update_follow_up_note() call instead of touching

@@ -475,7 +475,9 @@ class ActionRunner:
             self.email_sender.send(
                 to_email=student.email, subject=rendered_subject, body=rendered_body, signature=signature
             )
-            self.activity_logger.log(f"[EMAIL] Sent to {student.full_name} <{student.email}>")
+            self.activity_logger.log(
+                f"[EMAIL] {self.email_sender.describe_sent(f'{student.full_name} <{student.email}>')}"
+            )
             return StepResult(student=student, step_type="email", outcome="success")
         except Exception as exc:
             self.activity_logger.log(f"[EMAIL FAILED] {student.full_name} <{student.email}>: {exc}")
@@ -527,7 +529,7 @@ class ActionRunner:
                 self.note_writer.update_follow_up_note(
                     salesforce_id=student.salesforce_id, text=follow_up_note
                 )
-            self.activity_logger.log(f"[NOTE] Written for {student.full_name}")
+            self.activity_logger.log(f"[NOTE] {self.note_writer.describe_written(student.full_name)}")
             return StepResult(student=student, step_type="note", outcome="success")
         except Exception as exc:
             self.activity_logger.log(f"[NOTE FAILED] {student.full_name}: {exc}")

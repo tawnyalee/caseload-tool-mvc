@@ -10,6 +10,7 @@ from src.services.email_sender import FakeEmailSender
 from src.services.note_writer import FakeNoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
+from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter
 from src.services.text_sender import FakeTextSender
 
 
@@ -204,6 +205,38 @@ def test_run_logs_currently_running_count_and_per_student_processing_lines(tmp_p
     assert "[PROCESSING] Jane Doe (ID: SF1)" in joined
     assert "[PROCESSING] Amy Lee (ID: SF3)" in joined
     assert "[PROCESSING] John Roe (ID: SF2)" not in joined
+
+
+def test_log_says_sent_and_written_for_a_real_run(tmp_path):
+    students = [Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test")]
+    received = []
+    runner, template, *_ = _make_runner(tmp_path, students)
+    runner.activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+
+    runner.run(_make_action(template.id, is_text=False), group_name="General")
+
+    joined = "\n".join(received)
+    assert "[EMAIL] Sent to Jane Doe <jane@example.test>" in joined
+    assert "[NOTE] Written for Jane Doe" in joined
+
+
+def test_test_mode_log_says_where_the_email_really_went_and_that_no_note_was_written(tmp_path):
+    """Found live 2026-10-28: in test mode the log said "[EMAIL] Sent to
+    <student>" and "[NOTE] Written for <student>", although the email went
+    to the test address and nothing reached Salesforce."""
+    students = [Student(salesforce_id="SF1", first_name="Jane", last_name="Doe", email="jane@example.test")]
+    received = []
+    runner, template, email_sender, *_ = _make_runner(tmp_path, students)
+    runner.email_sender = RedirectingEmailSender(email_sender, "me@example.test")
+    runner.note_writer = TestModeNoteWriter()
+    runner.activity_logger = ActivityLogger(log_dir=str(tmp_path / "logs"), ui_callback=received.append)
+
+    runner.run(_make_action(template.id, is_text=False), group_name="General")
+
+    joined = "\n".join(received)
+    assert "[EMAIL] TEST MODE - sent to me@example.test instead of Jane Doe <jane@example.test>" in joined
+    assert "[NOTE] TEST MODE - not written to Salesforce for Jane Doe" in joined
+    assert "Sent to Jane" not in joined and "Written for" not in joined
 
 
 def test_email_subject_and_body_overrides_replace_the_actions_own_content(tmp_path):

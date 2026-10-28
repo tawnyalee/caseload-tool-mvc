@@ -22,6 +22,12 @@ class EmailSender(ABC):
         message) if sending can't work at all, e.g. Outlook isn't open, so
         the run stops before the first student. No-op by default."""
 
+    def describe_sent(self, recipient: str) -> str:
+        """The log wording for a successful send to `recipient` (a
+        "Name <address>" label). Test mode overrides it, since its emails
+        go somewhere else."""
+        return f"Sent to {recipient}"
+
 
 class FakeEmailSender(EmailSender):
     """Records every send() call instead of emailing anyone. `fail_for` lets

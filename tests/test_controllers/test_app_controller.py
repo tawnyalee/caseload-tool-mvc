@@ -31,7 +31,7 @@ from src.services.action_runner import RunControl
 from unittest.mock import ANY
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services.outlook_email_sender import OutlookEmailSender
-from src.services.test_mode import RedirectingEmailSender
+from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter
 from src.services.text_sender import UnavailableTextSender
 
 
@@ -669,7 +669,7 @@ def test_test_mode_file_redirects_email_and_fakes_notes(mock_ctk, mock_init_view
     assert isinstance(controller.email_sender, RedirectingEmailSender)
     assert controller.email_sender.redirect_to == "me@example.test"
     assert isinstance(controller.email_sender.inner, OutlookEmailSender)
-    assert isinstance(controller.note_writer, FakeNoteWriter)
+    assert isinstance(controller.note_writer, TestModeNoteWriter)
     assert controller.action_runner.email_sender is controller.email_sender
     assert controller.action_runner.note_writer is controller.note_writer
 
