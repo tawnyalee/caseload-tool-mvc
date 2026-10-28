@@ -1,6 +1,7 @@
 import pytest
 from playwright.sync_api import sync_playwright
 
+from src.services import app_paths
 from src.services import salesforce_browser_session as sbs
 
 
@@ -46,14 +47,26 @@ def test_open_authenticated_context_uses_the_in_memory_session():
 
 def test_login_succeeds_once_the_logged_in_element_appears_and_keeps_it_in_memory(tmp_path):
     url = _page(tmp_path, '<button title="Download">Download</button>')
-    files_before = set(tmp_path.iterdir())
 
     with sync_playwright() as playwright:
         sbs.log_in_interactively(playwright, url, '[title="Download"]', headless=True)
 
     assert sbs.has_session()
     assert isinstance(sbs._session_state, dict)
-    assert set(tmp_path.iterdir()) == files_before  # nothing written to disk
+
+
+def test_login_keeps_the_browser_profile_so_the_device_is_recognized_next_time(tmp_path):
+    """The profile folder outlives the login (that's what lets PingID
+    recognize the device); the session itself still lives only in memory."""
+    url = _page(tmp_path, '<button title="Download">Download</button>')
+
+    with sync_playwright() as playwright:
+        sbs.log_in_interactively(playwright, url, '[title="Download"]', headless=True)
+        sbs.clear_session()
+        sbs.log_in_interactively(playwright, url, '[title="Download"]', headless=True)  # profile reopens fine
+
+    assert any(app_paths.browser_profile_dir().iterdir())
+    assert sbs.has_session()
 
 
 def test_login_that_never_finishes_raises_and_stays_logged_out(tmp_path, monkeypatch):

@@ -14,18 +14,22 @@ kept IN MEMORY for the rest of this app session. Everything that needs an
 authenticated Salesforce page afterward (PlaywrightStudentDataProvider,
 PlaywrightNoteWriter) opens its own hidden browser loaded with it.
 
-Nothing is ever written to disk (developer's explicit call, 2026-10-22):
-when the app closes, the session is gone, and the next launch asks to log
-in again. An earlier version saved the session to a file for reuse across
-launches; that file was as good as being logged in for anyone who copied
-it, and it also meant a fresh app launch never asked to log in.
+The app never saves the session itself (developer's explicit call,
+2026-10-22): when the app closes, it's gone, and the next launch opens the
+login window again. An earlier version saved the session to a file of its
+own for reuse across launches; that file was as good as being logged in
+for anyone who copied it, and a fresh app launch never asked to log in.
+
+The login window does use the app's own saved Edge profile (2026-10-28,
+see browser_launch.py), the way the professor's everyday Edge would, so
+PingID recognizes the device instead of treating every launch as new.
 """
 from typing import Optional
 from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
-from src.services.browser_launch import launch_browser
+from src.services.browser_launch import clear_cached_pages, launch_browser, launch_login_context
 
 LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -76,19 +80,20 @@ def log_in_interactively(
     RuntimeError if the window is closed first or time runs out.
     `headless` exists only so tests don't pop up a window."""
     global _session_state
-    browser = launch_browser(playwright, headless=headless)
+    context = launch_login_context(playwright, headless=headless)
     try:
-        page = browser.new_context().new_page()
+        page = context.pages[0] if context.pages else context.new_page()
         page.goto(target_url)
         page.wait_for_selector(logged_in_selector, state="visible", timeout=LOGIN_TIMEOUT_MS)
-        _session_state = page.context.storage_state()  # a dict, kept in memory only
+        _session_state = context.storage_state()  # a dict, kept in memory only
+        clear_cached_pages(context, page.url)
     except PlaywrightTimeoutError:
         raise RuntimeError("Salesforce login wasn't finished within 5 minutes.") from None
     except PlaywrightError:
         raise RuntimeError("The Salesforce login window was closed before login finished.") from None
     finally:
         try:
-            browser.close()
+            context.close()
         except PlaywrightError:
             pass  # already closed by the professor
 

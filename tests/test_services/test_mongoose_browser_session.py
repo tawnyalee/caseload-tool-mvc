@@ -1,6 +1,7 @@
 import pytest
 from playwright.sync_api import sync_playwright
 
+from src.services import app_paths
 from src.services import mongoose_browser_session as mbs
 from src.services import salesforce_browser_session as sbs
 
@@ -51,15 +52,15 @@ def test_open_authenticated_context_uses_the_in_memory_session():
             context.browser.close()
 
 
-def test_login_succeeds_once_the_logged_in_element_appears_and_writes_nothing(tmp_path):
+def test_login_succeeds_once_the_logged_in_element_appears_and_saves_no_session_file(tmp_path):
     url = _page(tmp_path, '<div id="inbox">Inbox</div>')
-    files_before = set(tmp_path.iterdir())
 
     with sync_playwright() as playwright:
         mbs.log_in_interactively(playwright, "#inbox", target_url=url, headless=True)
 
     assert mbs.has_session()
-    assert set(tmp_path.iterdir()) == files_before
+    # Only Edge's own profile folder is on disk - the app saves no session file.
+    assert [p.name for p in app_paths.data_dir().iterdir()] == [app_paths.browser_profile_dir().name]
 
 
 def test_login_that_never_finishes_raises_and_stays_logged_out(tmp_path, monkeypatch):

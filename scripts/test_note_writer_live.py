@@ -16,6 +16,11 @@ the follow-up piece alone without also writing a note each time):
     python scripts/test_note_writer_live.py
     python scripts/test_note_writer_live.py followup
     python scripts/test_note_writer_live.py note
+
+To use a different student (and that student's course code), add both
+after the step:
+
+    python scripts/test_note_writer_live.py both <student id> <course code>
 """
 import sys
 from pathlib import Path
@@ -26,6 +31,7 @@ from src.services.note_writer import PlaywrightNoteWriter
 from src.services.salesforce_callbacks import CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn
 
 TEST_STUDENT_ID = "011730370"
+TEST_COURSE_CODE = "D413"
 
 
 def _log_in() -> None:
@@ -43,6 +49,8 @@ def _log_in() -> None:
 def main() -> None:
     _log_in()
     which = sys.argv[1] if len(sys.argv) > 1 else "both"
+    student_id = sys.argv[2] if len(sys.argv) > 2 else TEST_STUDENT_ID
+    course_code = sys.argv[3] if len(sys.argv) > 3 else TEST_COURSE_CODE
 
     writer = PlaywrightNoteWriter(
         student_record_url_template=CASELOAD_APP_URL,
@@ -52,18 +60,18 @@ def main() -> None:
     )
 
     if which in ("both", "note"):
-        print(f"Writing a test note for student {TEST_STUDENT_ID}...")
+        print(f"Writing a test note for student {student_id}...")
         writer.write_note(
-            salesforce_id=TEST_STUDENT_ID,
+            salesforce_id=student_id,
             subject="Automated test note",
             body="Verifying PlaywrightNoteWriter.write_note()",
-            course_code="D413",
+            course_code=course_code,
         )
         print("Done - check the student's record in Salesforce.")
 
     if which in ("both", "followup"):
-        print(f"Updating follow-up note for student {TEST_STUDENT_ID}...")
-        writer.update_follow_up_note(TEST_STUDENT_ID, "Automated follow-up test")
+        print(f"Updating follow-up note for student {student_id}...")
+        writer.update_follow_up_note(student_id, "Automated follow-up test")
         print("Done - check the roster's follow-up column.")
 
 

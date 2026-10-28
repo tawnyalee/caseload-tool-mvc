@@ -91,6 +91,12 @@ def test_mode_file() -> Path:
     return data_dir() / "test_mode.json"
 
 
+def browser_profile_dir() -> Path:
+    """The app's own Edge profile, used only for the login windows, so
+    PingID and WGU sign-in recognize the device on later launches."""
+    return data_dir() / "edge-profile"
+
+
 def logs_dir() -> Path:
     path = data_dir() / "logs"
     path.mkdir(parents=True, exist_ok=True)

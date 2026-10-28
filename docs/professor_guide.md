@@ -11,7 +11,7 @@ You need all of these on your computer:
 - **Windows** with **Microsoft Edge** (already installed on WGU computers).
 - **Outlook (classic)**, signed in to your WGU email. *Not* the "New Outlook" — see "Stay on Outlook (classic)" below.
 - **Your email signature set up in Outlook (classic)** (File → Options → Mail → Signatures). The app uses it on every email.
-- **Salesforce access** with **PingID on your phone**, since you'll log in each time you open the app.
+- **Salesforce access** with **PingID on your phone**, at least for your first login.
 
 ## Installing
 
@@ -26,11 +26,11 @@ No other installation is needed. Your groups, Actions, and templates are stored 
 
 Each time you open the app, an **Edge window opens to the WGU sign-in**:
 
-1. Log in as usual and approve the **PingID** request on your phone.
+1. Log in as usual. The first time, you'll also approve a **PingID** request on your phone; after that, WGU should recognize this computer, the same way your everyday Edge does.
 2. Wait. When your Salesforce Caseload page appears, the login window **closes by itself**.
 3. The app then loads your caseload, which takes about 20 seconds, and opens.
 
-Your login is **never saved**. When you close the app it's gone, and the next launch asks again.
+The app **never sees or saves your password**. The login window is Edge, using a separate Edge profile kept just for this app. If Edge offers to remember your password there, that's your choice, same as in your everyday Edge.
 
 **Just want to set things up?** Close the login window. The app still opens and everything works except actually sending. You'll see a note that the caseload couldn't be loaded — that's expected. When you're ready to send, click **↻ Refresh Caseload** to log in.
 
@@ -153,7 +153,7 @@ Your groups, Actions, templates, saved batches, and logs are kept in your own Wi
 (Paste that into File Explorer's address bar to open it.)
 
 - **No student roster is ever saved.** It's loaded fresh each session and kept only in memory.
-- **Your Salesforce login is never saved.**
+- **The app never saves your Salesforce password.** The login window keeps its own Edge profile (in the **edge-profile** folder) so WGU sign-in recognizes this computer. Pages it loads, including your Caseload page, are cleared from that profile right after you log in.
 - **Logs are kept for today only** and are deleted the next time you start the app. They exist so you can follow up on anything that failed today. If a Salesforce note fails, a screenshot of the page is saved under **logs\screenshots** for the same purpose.
 
 ## Troubleshooting

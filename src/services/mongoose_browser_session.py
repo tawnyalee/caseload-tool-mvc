@@ -3,8 +3,9 @@
 mirroring salesforce_browser_session.py: login can't be automated (SSO/
 MFA), so log_in_interactively() opens a visible browser, the professor
 logs in themselves, and the resulting session (cookies) is kept IN MEMORY
-for the rest of this app session. Nothing is ever written to disk
-(developer's explicit call, 2026-10-22 - same rule as Salesforce).
+for the rest of this app session. The app never saves that session
+itself (same rule as Salesforce); the login window uses the app's saved
+Edge profile, as Salesforce's does (see browser_launch.py).
 
 This is a COMPLETELY SEPARATE session from Salesforce's - Mongoose is a
 different site with its own login.
@@ -20,7 +21,7 @@ from typing import Optional
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
-from src.services.browser_launch import launch_browser
+from src.services.browser_launch import clear_cached_pages, launch_browser, launch_login_context
 
 MONGOOSE_URL = "https://sms.mongooseresearch.com"
 LOGIN_TIMEOUT_MS = 5 * 60 * 1000
@@ -58,19 +59,20 @@ def log_in_interactively(
     Raises RuntimeError if the window is closed first or time runs out.
     `headless` exists only so tests don't pop up a window."""
     global _session_state
-    browser = launch_browser(playwright, headless=headless)
+    context = launch_login_context(playwright, headless=headless)
     try:
-        page = browser.new_context().new_page()
+        page = context.pages[0] if context.pages else context.new_page()
         page.goto(target_url)
         page.wait_for_selector(logged_in_selector, state="visible", timeout=LOGIN_TIMEOUT_MS)
-        _session_state = page.context.storage_state()  # a dict, kept in memory only
+        _session_state = context.storage_state()  # a dict, kept in memory only
+        clear_cached_pages(context, page.url)
     except PlaywrightTimeoutError:
         raise RuntimeError("Mongoose login wasn't finished within 5 minutes.") from None
     except PlaywrightError:
         raise RuntimeError("The Mongoose login window was closed before login finished.") from None
     finally:
         try:
-            browser.close()
+            context.close()
         except PlaywrightError:
             pass  # already closed by the professor
 
