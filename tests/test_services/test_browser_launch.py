@@ -54,3 +54,15 @@ def test_login_window_with_missing_edge_gives_a_plain_message():
     playwright.chromium.launch_persistent_context.side_effect = PlaywrightError("Chromium distribution 'msedge' is not found")
     with pytest.raises(RuntimeError, match="Microsoft Edge couldn't be started"):
         launch_login_context(playwright)
+
+
+def test_profile_held_by_another_edge_is_not_reported_as_edge_missing():
+    """Real error seen 2026-10-28 when the profile was still open elsewhere:
+    the browser log appended to it names msedge.exe."""
+    playwright = MagicMock()
+    playwright.chromium.launch_persistent_context.side_effect = PlaywrightError(
+        "BrowserType.launch_persistent_context: Target page, context or browser has been closed\n"
+        "Browser logs:\n<launching> C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe --headless"
+    )
+    with pytest.raises(RuntimeError, match="Another login window from this app is already open"):
+        launch_login_context(playwright)

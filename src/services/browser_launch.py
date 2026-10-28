@@ -56,7 +56,11 @@ def launch_login_context(playwright: Playwright, headless: bool = False) -> Brow
         )
     except PlaywrightError as exc:
         _raise_plain_error_if_edge_missing(exc)
-        if "already in use" in str(exc).lower() or "processsingleton" in str(exc).lower():
+        # Edge doesn't say "in use" here: when another Edge holds the profile,
+        # the new one hands off to it and exits, so Playwright just sees the
+        # browser close during launch.
+        message = str(exc).lower()
+        if "already in use" in message or "processsingleton" in message or "has been closed" in message:
             raise RuntimeError(PROFILE_IN_USE_MESSAGE) from None
         raise
 
@@ -82,5 +86,9 @@ def clear_cached_pages(context: BrowserContext, url: str) -> None:
 
 
 def _raise_plain_error_if_edge_missing(exc: PlaywrightError) -> None:
-    if "msedge" in str(exc).lower() or "executable doesn't exist" in str(exc).lower():
+    # Only the first line: a failed launch appends Edge's own command line
+    # (which names msedge.exe) to every error, so matching "msedge" anywhere
+    # called a locked profile "Edge missing" (seen live 2026-10-28).
+    first_line = str(exc).lower().splitlines()[0] if str(exc) else ""
+    if "is not found" in first_line or "executable doesn't exist" in first_line:
         raise RuntimeError(EDGE_MISSING_MESSAGE) from None
