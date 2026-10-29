@@ -115,6 +115,9 @@ class MongooseTextSender(TextSender):
             compose_scheduled_text(self._page, text, commit=self.mode == AUTOMATIC)
         except NoMongooseMatch as exc:
             raise TextSkipped(f"{exc} ({student.course_code})") from None
+        except Exception as exc:
+            shot = self._screenshot("text-failed")
+            raise RuntimeError(f"{exc} (screenshot: {shot})") from exc
 
         when = f"{describe_time(student_time)} student time"
         if self.mode == DRY_RUN:
@@ -123,6 +126,21 @@ class MongooseTextSender(TextSender):
             self._wait_for_review()
             return f"Filled in for {when}; you clicked Schedule or Cancel in Mongoose"
         return f"Scheduled for {when}"
+
+    def _screenshot(self, tag: str) -> str:
+        """Saves what the Mongoose window showed when a step failed, next to
+        the Salesforce failure screenshots (kept one day, like the log).
+        Best-effort: returns the path, or a note if it couldn't be taken."""
+        from src.services import app_paths
+
+        folder = app_paths.screenshots_dir()
+        path = folder / f"{datetime.now():%Y%m%d-%H%M%S}-{tag}.png"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            self._page.screenshot(path=str(path), full_page=True)
+            return str(path)
+        except Exception:
+            return "not available"
 
     def _wait_for_review(self) -> None:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError

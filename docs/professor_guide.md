@@ -166,7 +166,8 @@ Your groups, Actions, templates, saved batches, and logs are kept in your own Wi
 
 - **No student roster is ever saved.** It's loaded fresh each session and kept only in memory.
 - **The app never saves your Salesforce password.** The login window keeps its own Edge profile (in the **edge-profile** folder) so WGU sign-in recognizes this computer. Pages it loads, including your Caseload page, are cleared from that profile right after you log in.
-- **Logs are kept for today only** and are deleted the next time you start the app. They exist so you can follow up on anything that failed today. If a Salesforce note fails, a screenshot of the page is saved under **logs\screenshots** for the same purpose.
+- **Logs are kept for today only** and are deleted the next time you start the app. They exist so you can follow up on anything that failed today. If a Salesforce note or a Mongoose text fails, a screenshot of the page is saved under **logs\screenshots** for the same purpose.
+- **The diagnostics log has no student information** and is kept for **14 days**, in **logs\diagnostics**. It's for troubleshooting: what you clicked and chose (as counts), the app version, and the full details of every error, each marked **Outside problem** (something you can fix or retry, such as Outlook being closed) or **App error** (most likely a bug). Before anything is written there, student names, IDs, emails, phone numbers, and texting IDs are replaced with placeholders such as **[student]**.
 
 ## Troubleshooting
 
@@ -191,5 +192,5 @@ Make sure Microsoft Edge is installed and up to date.
 **The login window says PingID failed, or nothing arrives on your phone**
 That's a WGU sign-in issue, not the app. Contact the IT Service Desk. You can still use the app for setup in the meantime.
 
-**"Something went wrong"**
-The details were saved to today's log in **%LOCALAPPDATA%\CaseloadTool\logs**. Send that file to whoever supports the app.
+**"Something went wrong"** (or any problem you want help with)
+Send the **diagnostics log** for that day, from **%LOCALAPPDATA%\CaseloadTool\logs\diagnostics**, to whoever supports the app. It's safe to share: it contains no student information, and it's kept for 14 days, so it still helps a few days later. Today's regular log (in **logs**) has more detail but includes student names — don't email it.

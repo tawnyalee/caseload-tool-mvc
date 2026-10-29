@@ -199,6 +199,12 @@ class ActionRunner:
         are that same dialog's last-minute content edits - see
         _attempt_email."""
         self.activity_logger.log(f"Starting run — Group: '{group_name}', Action: '{action.name}'")
+        self.activity_logger.log(
+            f"Action settings (id={action.id}): email={'on' if action.is_email else 'off'}, "
+            f"text={'on' if action.is_text else 'off'}, "
+            f"task emails={'on' if getattr(action, 'use_task_emails', False) else 'off'}, "
+            f"filters={action.filters or 'none'}"
+        )
 
         template = self.template_repo.get_by_id(action.template_id) if action.template_id else None
         if action.is_email:
@@ -346,8 +352,8 @@ class ActionRunner:
                     BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
                 )
             except Exception as exc:
-                self.activity_logger.log(
-                    f"[BATCH ITEM FAILED] Action '{action.name}' (Group: '{group_name}'): {exc}"
+                self.activity_logger.log_failure(
+                    f"[BATCH ITEM FAILED] Action '{action.name}' (Group: '{group_name}'): {exc}", exc
                 )
                 batch_summary.items.append(
                     BatchItemResult(
@@ -493,7 +499,7 @@ class ActionRunner:
             )
             return StepResult(student=student, step_type="email", outcome="success")
         except Exception as exc:
-            self.activity_logger.log(f"[EMAIL FAILED] {student.full_name} <{student.email}>: {exc}")
+            self.activity_logger.log_failure(f"[EMAIL FAILED] {student.full_name} <{student.email}>: {exc}", exc)
             return StepResult(student=student, step_type="email", outcome="failed", detail=str(exc))
 
     def _attempt_text(self, student: Student, action: Action) -> StepResult:
@@ -509,7 +515,7 @@ class ActionRunner:
             self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {exc}")
             return StepResult(student=student, step_type="text", outcome="skipped", detail=str(exc))
         except Exception as exc:
-            self.activity_logger.log(f"[TEXT FAILED] {student.full_name}: {exc}")
+            self.activity_logger.log_failure(f"[TEXT FAILED] {student.full_name}: {exc}", exc)
             return StepResult(student=student, step_type="text", outcome="failed", detail=str(exc))
 
     def _attempt_note(
@@ -552,5 +558,5 @@ class ActionRunner:
             self.activity_logger.log(f"[NOTE] {self.note_writer.describe_written(student.full_name)}")
             return StepResult(student=student, step_type="note", outcome="success")
         except Exception as exc:
-            self.activity_logger.log(f"[NOTE FAILED] {student.full_name}: {exc}")
+            self.activity_logger.log_failure(f"[NOTE FAILED] {student.full_name}: {exc}", exc)
             return StepResult(student=student, step_type="note", outcome="failed", detail=str(exc))

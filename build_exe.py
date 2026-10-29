@@ -40,10 +40,31 @@ ROOT = Path(__file__).resolve().parent
 APP_NAME = "CaseloadTool"
 
 
+def _build_version() -> str:
+    """e.g. "ebee7cc built 2026-10-28" - the git commit (plus "-dirty" when
+    there are uncommitted changes) and the build date."""
+    import subprocess
+    from datetime import date
+
+    try:
+        commit = subprocess.run(
+            ["git", "describe", "--always", "--dirty"], cwd=ROOT, capture_output=True, text=True, timeout=10,
+        ).stdout.strip() or "unknown"
+    except OSError:
+        commit = "unknown"
+    return f"{commit} built {date.today().isoformat()}"
+
+
 def main() -> None:
     # Start clean so a file removed from the project doesn't linger in the build.
     for leftover in (ROOT / "build", ROOT / "dist" / APP_NAME):
         shutil.rmtree(leftover, ignore_errors=True)
+
+    # Which build this is, for the diagnostics log's startup line
+    # (src/services/diagnostics.py reads it via app_paths.resource_path).
+    version_file = ROOT / "build" / "version.txt"
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(_build_version(), encoding="utf-8")
 
     PyInstaller.__main__.run([
         str(ROOT / "main.py"),
@@ -54,6 +75,7 @@ def main() -> None:
         # Read-only files the app ships with (found via app_paths.resource_path).
         "--add-data", f"{ROOT / 'src' / 'assets' / 'quill'};src/assets/quill",
         "--add-data", f"{ROOT / 'docs' / 'professor_guide.md'};docs",  # the in-app Help screen
+        "--add-data", f"{version_file};.",
         # CustomTkinter's themes/fonts and the time-zone database are data
         # files, not code - make sure they're included.
         "--collect-data", "customtkinter",

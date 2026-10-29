@@ -11,6 +11,7 @@ from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
 from src.services.saved_batch_repository import SavedBatchRepository
 from src.models.email_template import EmailTemplate
+from src.services.diagnostics import Diagnostics
 from src.services.activity_logger import ActivityLogger, purge_old_logs
 from src.services.student_data_provider import (
     CachingStudentDataProvider,
@@ -99,7 +100,10 @@ class AppController:
         log_dir = self.LOG_DIR or app_paths.logs_dir()
         removed_count = purge_old_logs(log_dir, Path(log_dir) / "screenshots")
         # ui_callback is wired up in _init_views() once nav_panel exists
-        self.activity_logger = ActivityLogger(log_dir=str(log_dir))
+        # Student-free copy of the log, kept 14 days for troubleshooting.
+        self.activity_logger = ActivityLogger(
+            log_dir=str(log_dir), diagnostics=Diagnostics(Path(log_dir) / "diagnostics"),
+        )
         if removed_count:
             self.activity_logger.log(f"Cleared {removed_count} log file(s)/screenshot(s) from previous days")
 
@@ -147,6 +151,7 @@ class AppController:
             write_note_fn=write_note_fn,
             update_follow_up_fn=update_follow_up_fn,
         )
+        self.activity_logger.diagnostics.header(test_mode=self.test_mode)
         if self.test_mode:
             self.note_writer = TestModeNoteWriter()
             self.activity_logger.log(
@@ -233,11 +238,19 @@ class AppController:
         real login window."""
         try:
             students = self._load_caseload_logging_in_if_needed()
+            self.activity_logger.diagnostics.set_roster(students)
             self.activity_logger.log(f"Caseload loaded at startup: {len(students)} students")
             self._log_contact_id_report()
         except Exception as exc:
-            self.activity_logger.log(f"[CASELOAD NOT LOADED AT STARTUP] {exc}")
+            self.activity_logger.log_failure(f"[CASELOAD NOT LOADED AT STARTUP] {exc}", exc)
             self._startup_problem = f"The caseload couldn't be loaded:\n\n{exc}"
+
+    def _log_review_choice(self, what: str, selected: int, offered: int, edited: bool = False) -> None:
+        """What the professor chose in a review window, as counts only."""
+        line = f"[USER] Confirmed '{what}' for {selected} of {offered} students"
+        if edited:
+            line += "; the email was edited in the review window for this send"
+        self.activity_logger.log(line)
 
     def _log_contact_id_report(self) -> None:
         """Logs how many students texting can find (see caseload_grid.py)."""
@@ -432,6 +445,10 @@ class AppController:
         ]
 
         def _on_confirm(selections):
+            self._log_review_choice(
+                "Send Welcome Emails", sum(len(ids) for ids in selections.values()),
+                sum(len(item.students) for item in review_items),
+            )
             self._run_in_background(
                 "Sending Welcome Emails",
                 lambda control: self.action_runner.run_welcome_emails(
@@ -478,6 +495,10 @@ class AppController:
         students = self.action_runner.student_provider.get_students()
 
         def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
+            self._log_review_choice(
+                "Send Email to All Students", len(selected_ids), len(students),
+                edited=reviewed_subject.strip() != subject.strip() or reviewed_body.strip() != body.strip(),
+            )
             self._run_in_background(
                 "Sending Email",
                 lambda control: self.action_runner.send_ad_hoc_email(
@@ -545,6 +566,10 @@ class AppController:
         ]
 
         def _on_confirm(selections):
+            self._log_review_choice(
+                f"Run Batch ({len(items)} actions)", sum(len(ids) for ids in selections.values()),
+                sum(len(item.students) for item in review_items),
+            )
             included_ids_by_index = {int(key): ids for key, ids in selections.items()}
             self._run_in_background(
                 "Running Batch",
@@ -633,6 +658,13 @@ class AppController:
             template_body = template.body if template else ""
 
         def _on_confirm(selected_ids, reviewed_subject, reviewed_body):
+            self._log_review_choice(
+                f"Run '{action_name}'", len(selected_ids), len(matches),
+                edited=editable_email and (
+                    reviewed_subject.strip() != (action.email_subject or "").strip()
+                    or reviewed_body.strip() != template_body.strip()
+                ),
+            )
             self._run_in_background(
                 f"Running '{action_name}'",
                 lambda control: self.action_runner.run(
@@ -1134,12 +1166,13 @@ class AppController:
         self.activity_logger.log("Refresh Caseload clicked")
 
         def _done(students):
+            self.activity_logger.diagnostics.set_roster(students)
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
             self._log_contact_id_report()
             messagebox.showinfo("Refresh Caseload", f"↻ Caseload refreshed — {len(students)} students loaded.")
 
         def _failed(exc):
-            self.activity_logger.log(f"[REFRESH FAILED] {exc}")
+            self.activity_logger.log_failure(f"[REFRESH FAILED] {exc}", exc)
             messagebox.showerror("Refresh Failed", f"Couldn't refresh the caseload:\n\n{exc}")
 
         self._run_in_background(
@@ -1193,9 +1226,12 @@ class AppController:
         logger = getattr(self, "activity_logger", None)
         if logger:
             logger.log(f"[UNEXPECTED ERROR] {exc_type.__name__}: {exc}\n{details}")
+            if logger.diagnostics is not None and exc is not None:
+                logger.diagnostics.error(f"[UNEXPECTED ERROR] {exc_type.__name__}: {exc}", exc)
         messagebox.showerror(
             "Something went wrong",
-            f"{exc}\n\nThe details were saved to today's log.",
+            f"{exc}\n\nThe details were saved to today's log, and to the diagnostics log "
+            "(logs\\diagnostics, no student names).",
         )
 
     # region Background runs
@@ -1263,7 +1299,7 @@ class AppController:
 
         def _failed(exc):
             _end()
-            self.activity_logger.log(f"[{title.upper()} FAILED] {exc}")
+            self.activity_logger.log_failure(f"[{title.upper()} FAILED] {exc}", exc)
             if on_failed:
                 on_failed(exc)
             else:

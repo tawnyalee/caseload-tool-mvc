@@ -48,10 +48,13 @@ def purge_old_logs(log_dir, screenshots_dir, today: Optional[date] = None) -> in
 
 
 class ActivityLogger:
-    def __init__(self, log_dir: str = "logs", ui_callback: Optional[Callable[[str], None]] = None):
+    def __init__(self, log_dir: str = "logs", ui_callback: Optional[Callable[[str], None]] = None,
+                 diagnostics=None):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.ui_callback = ui_callback
+        # Optional student-free copy, kept longer (see diagnostics.py).
+        self.diagnostics = diagnostics
 
         self._logger = logging.getLogger(f"activity_logger.{id(self)}")
         self._logger.setLevel(logging.INFO)
@@ -81,7 +84,20 @@ class ActivityLogger:
     def log(self, message: str) -> None:
         self._attach_handler_for_today()
         self._logger.info(message)
+        if self.diagnostics is not None:
+            self.diagnostics.line(message)
 
         if self.ui_callback:
             timestamp = datetime.now().strftime("%H:%M:%S")
             self.ui_callback(f"[{timestamp}] {message}")
+
+    def log_failure(self, message: str, exc: BaseException) -> None:
+        """A failure: `message` in this log (as log() would), and the full
+        error report, labeled app error or outside problem, in diagnostics."""
+        self._attach_handler_for_today()
+        self._logger.info(message)
+        if self.ui_callback:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.ui_callback(f"[{timestamp}] {message}")
+        if self.diagnostics is not None:
+            self.diagnostics.error(message, exc)
