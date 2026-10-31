@@ -21,8 +21,13 @@ To use a different student (and that student's course code), add both
 after the step:
 
     python scripts/test_note_writer_live.py both <student id> <course code>
+
+To time several students on one shared browser, as a real run does:
+
+    python scripts/test_note_writer_live.py run <course code> <student id> <student id>
 """
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,9 +51,33 @@ def _log_in() -> None:
     print("Logged in.")
 
 
+def _run_like_the_app(course_code: str, student_ids: list) -> None:
+    """Note and follow-up per student on one shared browser, as a real run
+    does, timed. Writes real notes to every student listed."""
+    writer = PlaywrightNoteWriter(
+        student_record_url_template=CASELOAD_APP_URL,
+        write_note_fn=write_note_fn,
+        update_follow_up_fn=update_follow_up_fn,
+        headless=False,
+    )
+    writer.start_run()
+    try:
+        for student_id in student_ids:
+            started = time.monotonic()
+            writer.write_note(student_id, "Automated test note", "Testing the shared browser.", course_code)
+            writer.update_follow_up_note(student_id, "Automated follow-up test")
+            print(f"{student_id}: {time.monotonic() - started:.0f} seconds")
+    finally:
+        writer.finish_run()
+        writer.close()
+
+
 def main() -> None:
     _log_in()
     which = sys.argv[1] if len(sys.argv) > 1 else "both"
+    if which == "run":
+        _run_like_the_app(sys.argv[2], sys.argv[3:])
+        return
     student_id = sys.argv[2] if len(sys.argv) > 2 else TEST_STUDENT_ID
     course_code = sys.argv[3] if len(sys.argv) > 3 else TEST_COURSE_CODE
 

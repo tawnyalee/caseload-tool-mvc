@@ -1,5 +1,7 @@
+import threading
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
 from src.models.group import Group
@@ -33,6 +35,7 @@ from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, LocalOu
 from src.services.action_runner import ActionRunner, RunControl
 from src.services.background_worker import BackgroundWorker, UiDispatcher
 from src.views.dashboard_view import DashboardView
+from src.views.loading_view import LOADING_CASELOAD_TEXT, LoadingView
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
 from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
@@ -73,6 +76,7 @@ class AppController:
     # only so tests can point them elsewhere.
     LOG_DIR = None
     TEST_MODE_FILE = None
+    _loading_view: Optional[LoadingView] = None  # set only while startup loads
 
     # region Initialization
     def __init__(self) -> None:
@@ -239,6 +243,48 @@ class AppController:
         that construct a real AppController can patch this out the same way
         they already patch _init_views, instead of every such test opening a
         real login window."""
+        self._show_loading_screen()
+        try:
+            self._run_keeping_window_alive(self._load_caseload_at_startup)
+        finally:
+            self._hide_loading_screen()
+
+    def _show_loading_screen(self) -> None:
+        self._loading_view = LoadingView(self.root)
+        self._loading_view.pack(fill="both", expand=True)
+        # Closing here would destroy the window under the running load. The
+        # login has its own 5-minute limit, so this can't wait forever.
+        self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+
+    def _hide_loading_screen(self) -> None:
+        if self._loading_view is not None:
+            self._loading_view.destroy()
+            self._loading_view = None
+
+    def _set_loading_status(self, text: str) -> None:
+        """Updates the loading screen, if it's up, from the worker thread."""
+        if self._loading_view is not None:
+            self.ui.call_soon(self._loading_view.set_status, text)
+
+    def _run_keeping_window_alive(self, work: Callable[[], None]) -> None:
+        """Runs `work` on the background thread and returns when it's done,
+        servicing the window meanwhile. mainloop() hasn't started yet, and
+        without this Windows would call the app Not Responding during the load."""
+        done = threading.Event()
+
+        def _work():
+            try:
+                work()
+            finally:
+                done.set()
+
+        # `work` handles its own failures, so there's nothing to deliver back.
+        self.worker.submit(_work, on_done=lambda _: None, on_error=lambda _: None)
+        while not done.is_set():
+            self.root.update()
+            time.sleep(0.02)
+
+    def _load_caseload_at_startup(self) -> None:
         try:
             students = self._load_caseload_logging_in_if_needed()
             self.activity_logger.diagnostics.set_roster(students)
@@ -280,6 +326,7 @@ class AppController:
         logged in yet this app session, or again if the login has expired."""
         if not salesforce_browser_session.has_session():
             self._log_in_to_salesforce()
+        self._set_loading_status(LOADING_CASELOAD_TEXT)
         try:
             return self.student_data_provider.refresh()
         except salesforce_browser_session.SessionExpiredError:
@@ -1278,6 +1325,27 @@ class AppController:
         else:
             self._active_run.request_stop()
 
+    def _refresh_caseload(self):
+        """Runs on the background thread, which owns the notes' browser."""
+        note_writer = getattr(self, "note_writer", None)
+        if note_writer is not None:
+            note_writer.close()  # its page is showing the old caseload
+        return self._load_caseload_logging_in_if_needed()
+
+    def _close_note_browser_before_exit(self) -> None:
+        """Asks the background thread to close the hidden notes browser, and
+        waits briefly so it isn't left running."""
+        closed = threading.Event()
+
+        def _close():
+            try:
+                self.note_writer.close()
+            finally:
+                closed.set()
+
+        self.worker.submit(_close, on_done=lambda _: None, on_error=lambda _: None)
+        closed.wait(timeout=5)
+
     def handle_refresh_requested(self) -> None:
         if self._is_busy_and_told_user():
             return
@@ -1295,7 +1363,7 @@ class AppController:
 
         self._run_in_background(
             "Refreshing Caseload",
-            lambda control: self._load_caseload_logging_in_if_needed(),
+            lambda control: self._refresh_caseload(),
             on_finished=_done, on_failed=_failed, stoppable=False,
             status="Loading the caseload from Salesforce… (a login window may open)",
         )
@@ -1331,6 +1399,8 @@ class AppController:
             "(e.g. emailed but no note). Press Stop and wait instead to finish cleanly.",
         ):
             return
+        if self._active_run is None:
+            self._close_note_browser_before_exit()
         self.root.destroy()
 
     def _on_unexpected_error(self, exc_type, exc, tb) -> None:

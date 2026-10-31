@@ -106,3 +106,108 @@ def test_playwright_note_writer_raises_a_clear_error_when_not_logged_in(tmp_path
 
     with pytest.raises(RuntimeError, match="Not logged in to Salesforce"):
         writer.write_note("SF1", "Subject", "Body")
+
+
+def _shared_writer(monkeypatch, opened):
+    """A real PlaywrightNoteWriter over stand-in browser objects."""
+    from unittest.mock import MagicMock
+
+    def fake_open(_playwright, headless=True):
+        context = MagicMock()
+        context.new_page.return_value.url = "https://example.test/caseload"
+        opened.append(context)
+        return context
+
+    monkeypatch.setattr("src.services.note_writer.open_authenticated_context", fake_open)
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: MagicMock())
+    return PlaywrightNoteWriter(
+        student_record_url_template="https://example.test/caseload",
+        write_note_fn=MagicMock(), update_follow_up_fn=MagicMock(),
+    )
+
+
+def test_a_run_shares_one_browser_and_page_across_students(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    for student_id in ("S1", "S2", "S3"):
+        writer.write_note(student_id, "Subject", "Body", "D424")
+        writer.update_follow_up_note(student_id, "Task 2 Support")
+    writer.finish_run()
+
+    assert len(opened) == 1
+    opened[0].new_page.return_value.goto.assert_called_once()
+    opened[0].browser.close.assert_not_called()
+    assert writer.write_note_fn.call_count == 3 and writer.update_follow_up_fn.call_count == 3
+
+
+def test_the_browser_stays_open_between_runs_and_each_run_reloads_once(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    for run in range(2):
+        writer.start_run()
+        writer.write_note("S1", "Subject", "Body", "D424")
+        writer.update_follow_up_note("S1", "Task 2 Support")
+        writer.finish_run()
+
+    assert len(opened) == 1
+    assert opened[0].new_page.return_value.goto.call_count == 2
+
+
+def test_close_ends_the_browser_and_the_next_run_opens_a_new_one(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    writer.write_note("S1", "Subject", "Body", "D424")
+    writer.finish_run()
+    writer.close()
+    opened[0].browser.close.assert_called_once()
+
+    writer.start_run()
+    writer.write_note("S2", "Subject", "Body", "D424")
+    writer.finish_run()
+    assert len(opened) == 2
+
+
+def test_a_browser_that_died_between_runs_is_replaced(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+    writer.start_run()
+    writer.write_note("S1", "Subject", "Body", "D424")
+    writer.finish_run()
+    opened[0].new_page.return_value.goto.side_effect = RuntimeError("target closed")
+
+    writer.start_run()
+    writer.write_note("S2", "Subject", "Body", "D424")
+    writer.finish_run()
+
+    assert len(opened) == 2
+    assert writer.write_note_fn.call_count == 2
+
+
+def test_after_a_failure_the_next_note_starts_on_a_fresh_page(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+    writer.write_note_fn.side_effect = [RuntimeError("page got stuck"), None]
+
+    writer.start_run()
+    with pytest.raises(RuntimeError):
+        writer.write_note("S1", "Subject", "Body", "D424")
+    writer.write_note("S2", "Subject", "Body", "D424")
+    writer.finish_run()
+
+    assert len(opened) == 2
+    opened[0].browser.close.assert_called_once()
+
+
+def test_finish_run_is_safe_when_no_note_was_written(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    writer.finish_run()
+
+    assert opened == []

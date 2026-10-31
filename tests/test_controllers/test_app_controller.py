@@ -1,6 +1,8 @@
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import customtkinter as ctk
 import pytest
 
 # Add project 'src' folder to Python path
@@ -15,6 +17,8 @@ from services.action_repository import ActionRepository
 from services.saved_batch_repository import SavedBatchRepository
 from services.action_runner import ActionRunSummary, BatchRunSummary, BatchItemResult, StepResult
 from models.student import Student
+from src.services.background_worker import BackgroundWorker, UiDispatcher
+from src.views.loading_view import LoadingView
 from src.services.task_emails import TaskEmail
 
 # AppController itself (imported above via 'controllers.app_controller', no
@@ -573,11 +577,60 @@ def test_student_data_provider_is_a_caching_playwright_provider(mock_ctk, mock_i
     assert real.export_button_selector == EXPORT_BUTTON_SELECTOR
 
 
+@pytest.fixture
+def ctk_loading_root():
+    app = ctk.CTk()
+    app.withdraw()
+    yield app
+    app.destroy()
+
+
+def test_loading_screen_shows_during_the_load_and_goes_away_after(ctk_loading_root):
+    controller = AppController.__new__(AppController)
+    controller.root = ctk_loading_root
+    controller.ui = UiDispatcher(ctk_loading_root)
+    controller.worker = BackgroundWorker(dispatch=controller.ui.call_soon, thread_setup=lambda: None)
+    controller._loading_view = None
+    seen = {}
+
+    # Runs on the worker thread, so it can't touch Tk widgets itself.
+    def fake_load():
+        seen["shown"] = controller._loading_view is not None
+        controller._set_loading_status("Loading now")
+        time.sleep(0.2)
+
+    controller._load_caseload_at_startup = fake_load
+    try:
+        with patch.object(LoadingView, "set_status") as mock_set_status:
+            AppController._refresh_caseload_at_startup(controller)
+    finally:
+        controller.worker.stop()
+
+    assert seen == {"shown": True}
+    mock_set_status.assert_called_once_with("Loading now")
+    assert controller._loading_view is None
+
+
+def test_loading_screen_goes_away_even_if_the_load_blows_up(ctk_loading_root):
+    controller = AppController.__new__(AppController)
+    controller.root = ctk_loading_root
+    controller._loading_view = None
+    controller._run_keeping_window_alive = MagicMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError):
+        AppController._refresh_caseload_at_startup(controller)
+
+    assert controller._loading_view is None
+
+
+@patch.object(AppController, "_show_loading_screen")
 @patch.object(AppController, "_log_in_to_salesforce")  # never open a real login window
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch.object(PlaywrightStudentDataProvider, "get_students")
-def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock_ctk, mock_init_views, mock_login):
+def test_refresh_caseload_at_startup_populates_the_cache(
+    mock_get_students, mock_ctk, mock_init_views, mock_login, mock_loading
+):
     """_refresh_caseload_at_startup runs for real here (not patched out) -
     only the live Playwright call underneath it is faked, so this proves
     the eager-fetch-on-launch wiring actually populates the cache during
@@ -594,12 +647,13 @@ def test_refresh_caseload_at_startup_populates_the_cache(mock_get_students, mock
     mock_get_students.assert_called_once()
 
 
+@patch.object(AppController, "_show_loading_screen")
 @patch.object(AppController, "_log_in_to_salesforce")  # never open a real login window
 @patch.object(AppController, "_init_views")
 @patch("src.controllers.app_controller.ctk.CTk")
 @patch.object(PlaywrightStudentDataProvider, "get_students", side_effect=RuntimeError("session expired"))
 def test_refresh_caseload_at_startup_failure_does_not_crash_app_construction(
-    mock_get_students, mock_ctk, mock_init_views, mock_login
+    mock_get_students, mock_ctk, mock_init_views, mock_login, mock_loading
 ):
     """A failed fetch at startup (e.g. an expired session on first launch
     of the day) must be logged, not left to crash AppController() entirely -
@@ -719,17 +773,29 @@ def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
     controller = _runs_synchronously(MagicMock())
     controller._startup_problem = None
     controller._load_caseload_logging_in_if_needed.side_effect = RuntimeError("The Salesforce login window was closed before login finished.")
-    startup = AppController._refresh_caseload_at_startup.__get__(controller, AppController)
+    startup = AppController._load_caseload_at_startup.__get__(controller, AppController)
 
     startup()  # must not raise - the app still opens
 
     assert "login window was closed" in controller._startup_problem
 
 
+def test_refresh_closes_the_notes_browser_before_reloading():
+    controller = MagicMock()
+    calls = MagicMock()
+    controller.note_writer = calls.writer
+    controller._load_caseload_logging_in_if_needed = calls.load
+
+    AppController._refresh_caseload(controller)
+
+    assert [c[0] for c in calls.mock_calls] == ["writer.close", "load"]
+
+
 @patch("src.controllers.app_controller.messagebox.showinfo")
 def test_refresh_caseload_button_logs_in_if_needed(mock_showinfo):
     controller = _runs_synchronously(MagicMock())
     controller._load_caseload_logging_in_if_needed.return_value = ["s1", "s2"]
+    controller._refresh_caseload = AppController._refresh_caseload.__get__(controller, AppController)
     refresh = AppController.handle_refresh_requested.__get__(controller, AppController)
 
     refresh()

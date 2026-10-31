@@ -225,3 +225,15 @@ def test_default_signature_is_blank_until_saved_and_survives_reloading(tmp_path)
     assert AppSettingsRepository(path).default_signature == ""
     AppSettingsRepository(path).save_default_signature("My Signature")
     assert AppSettingsRepository(path).default_signature == "My Signature"
+
+
+def test_notes_share_one_run_even_when_an_email_run_fails_partway():
+    runner = _runner([_student()])
+    runner.note_writer = MagicMock(wraps=runner.note_writer)
+    runner.note_writer.write_note.side_effect = RuntimeError("Salesforce hiccup")
+
+    summary = runner.run_task_emails(runner.get_task_emails([_course()], 1, MONDAY), "Sig")
+
+    assert summary.failed == 1
+    runner.note_writer.start_run.assert_called_once()
+    runner.note_writer.finish_run.assert_called_once()

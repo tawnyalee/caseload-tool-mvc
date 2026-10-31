@@ -28,7 +28,7 @@ Each time you open the app, an **Edge window opens to the WGU sign-in**:
 
 1. Log in as usual. The first time, you'll also approve a **PingID** request on your phone; after that, WGU should recognize this computer, the same way your everyday Edge does.
 2. Wait. When your Salesforce Caseload page appears, the login window **closes by itself**.
-3. The app then loads your caseload, which takes about 20 seconds, and opens.
+3. The app window shows a loading screen the whole time. Once you're logged in, it says it's loading your caseload, which can take a minute or two, then the app opens.
 
 The app **never sees or saves your password**. The login window is Edge, using a separate Edge profile kept just for this app. If Edge offers to remember your password there, that's your choice, same as in your everyday Edge.
 
@@ -112,7 +112,7 @@ Before sending you'll see every matching student. Uncheck anyone to leave them o
 
 A progress window shows who's being sent to and how far along it is. The app stays usable, and the **Live Application Log** shows each step as it happens.
 
-- **⛔ Stop after this student** (or **⛔ STOP Process**) finishes the current student, then stops.
+- **⛔ Cancel after this student** (or **⛔ STOP Process**) finishes the current student, then cancels the rest.
 - If you close the app mid-run it asks first, because the current student could be left half-done (emailed, but no note yet).
 
 ### Results

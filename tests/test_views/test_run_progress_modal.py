@@ -30,7 +30,7 @@ def test_stop_button_requests_a_stop_once_and_says_so(ctk_root):
         modal.stop_button.invoke()
         assert calls == ["stop"]
         assert modal.stop_button.cget("state") == "disabled"
-        assert "Stopping" in modal.stop_button.cget("text")
+        assert "Canceling" in modal.stop_button.cget("text")
     finally:
         modal.close()
 

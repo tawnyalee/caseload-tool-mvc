@@ -38,7 +38,7 @@ class RunProgressModal(ctk.CTkToplevel):
         if on_stop:
             self.progress_bar.set(0)
             self.stop_button = ctk.CTkButton(
-                self, text="⛔ Stop after this student", fg_color="#b22222", hover_color="#8b1a1a",
+                self, text="⛔ Cancel after this student", fg_color="#b22222", hover_color="#8b1a1a",
                 command=self.request_stop,
             )
             self.stop_button.pack(pady=(10, 15))
@@ -77,7 +77,7 @@ class RunProgressModal(ctk.CTkToplevel):
             return  # nothing stoppable (refresh) - the window closes itself when done
         self.on_stop()
         if self.stop_button:
-            self.stop_button.configure(state="disabled", text="Stopping after this student…")
+            self.stop_button.configure(state="disabled", text="Canceling after this student…")
 
     def close(self) -> None:
         if self._closed:

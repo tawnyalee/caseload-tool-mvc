@@ -31,6 +31,16 @@ class NoteWriter(ABC):
         (e.g. 'Sent welcome email'). Raises an exception if it fails."""
         raise NotImplementedError
 
+    def start_run(self) -> None:
+        """Called before a run's notes, so a writer can share one connection
+        across them. finish_run() always follows."""
+
+    def finish_run(self) -> None:
+        """Called after a run's notes. Must not raise."""
+
+    def close(self) -> None:
+        """Ends any connection kept between runs. Must not raise."""
+
     def describe_written(self, student_name: str) -> str:
         """The log wording for a successful note step. Test mode overrides
         it, since nothing reaches Salesforce."""
@@ -99,6 +109,74 @@ class PlaywrightNoteWriter(NoteWriter):
         self.write_note_fn = write_note_fn
         self.update_follow_up_fn = update_follow_up_fn
         self.headless = headless
+        self._in_run = False
+        self._playwright = None
+        self._context = None
+        self._page = None
+        self._reload_before_next_note = False
+
+    def start_run(self) -> None:
+        """Every note and follow-up shares one hidden browser for the whole
+        app session, until close() (Refresh Caseload, or the app closing).
+        Opening a browser and loading the Caseload page twice per student
+        was most of a run's time (developer, 2026-10-31). Opened on the first
+        note, on the background thread, which must also close it: Playwright's
+        sync API stays on one thread. A page left sitting between runs may
+        have timed out, so each run's first note reloads it once."""
+        self._in_run = True
+        self._reload_before_next_note = self._page is not None
+
+    def finish_run(self) -> None:
+        self._in_run = False
+
+    def close(self) -> None:
+        self._close_shared_page()
+
+    def _close_shared_page(self) -> None:
+        if self._context is not None:
+            try:
+                self._context.browser.close()
+            except Exception:
+                pass
+        if self._playwright is not None:
+            try:
+                self._playwright.stop()
+            except Exception:
+                pass
+        self._playwright = self._context = self._page = None
+
+    def _open_shared_page(self, salesforce_id: str) -> "Page":
+        from playwright.sync_api import sync_playwright
+
+        url = self.student_record_url_template.format(salesforce_id=salesforce_id)
+        if self._page is not None and self._reload_before_next_note:
+            self._reload_before_next_note = False
+            try:
+                self._go_to(url)
+            except SessionExpiredError:
+                raise
+            except Exception:
+                self._close_shared_page()  # the browser died while idle: start over
+        if self._page is None:
+            self._playwright = sync_playwright().start()
+            self._context = open_authenticated_context(self._playwright, headless=self.headless)
+            self._page = self._context.new_page()
+            self._go_to(url)
+        return self._page
+
+    def _go_to(self, url: str) -> None:
+        self._page.goto(url)
+        if looks_like_a_different_host(url, self._page.url):
+            raise SessionExpiredError(EXPIRED_MESSAGE)
+
+    def _run_on_shared_page(self, salesforce_id: str, action: "Callable[[Page], None]") -> None:
+        """After any failure the page's state is unknown, so the next note
+        starts over on a new browser and a freshly loaded page."""
+        try:
+            action(self._open_shared_page(salesforce_id))
+        except Exception:
+            self._close_shared_page()
+            raise
 
     def write_note(self, salesforce_id: str, subject: str, body: str, course_code: str = "") -> None:
         self._run(salesforce_id, lambda page: self.write_note_fn(page, salesforce_id, subject, body, course_code))
@@ -107,6 +185,10 @@ class PlaywrightNoteWriter(NoteWriter):
         self._run(salesforce_id, lambda page: self.update_follow_up_fn(page, salesforce_id, text))
 
     def _run(self, salesforce_id: str, action: "Callable[[Page], None]") -> None:
+        if self._in_run:
+            self._run_on_shared_page(salesforce_id, action)
+            return
+
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:

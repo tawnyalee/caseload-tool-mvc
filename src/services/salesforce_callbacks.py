@@ -72,6 +72,19 @@ def _id_cell(page: Page, salesforce_id: str):
     return page.locator("td").filter(has_text=re.compile(rf"^{re.escape(salesforce_id)}$"))
 
 
+def _scroll_grid(page: Page, statement: str) -> None:
+    """Runs `statement` on the grid's real scrollable container, `node`."""
+    page.locator("tr").first.evaluate(
+        f"""el => {{
+            let node = el;
+            while (node && node.scrollHeight <= node.clientHeight) {{
+                node = node.parentElement;
+            }}
+            if (node) {{ {statement} }}
+        }}"""
+    )
+
+
 def _row_for_student(page: Page, salesforce_id: str, max_scroll_attempts: int = 60):
     """The <tr> containing that student's ID cell, for actions (like the
     follow-up note button/textarea) scoped to the rest of their row.
@@ -96,17 +109,15 @@ def _row_for_student(page: Page, salesforce_id: str, max_scroll_attempts: int = 
     # Setting scrollTop directly on the real scrollable container fires
     # the same native scroll event a scrollbar drag would, regardless of
     # how a human would trigger it or where the mouse happens to be.
+    #
+    # Starts from the top: a run shares one page across students, so the
+    # grid may already be scrolled past this one.
+    _scroll_grid(page, "node.scrollTop = 0;")
+    page.wait_for_timeout(150)
+    if row.count() > 0:
+        return row
     for _ in range(max_scroll_attempts):
-        page.locator("tr").first.evaluate(
-            """(el, dy) => {
-                let node = el;
-                while (node && node.scrollHeight <= node.clientHeight) {
-                    node = node.parentElement;
-                }
-                if (node) node.scrollTop += dy;
-            }""",
-            600,
-        )
+        _scroll_grid(page, "node.scrollTop += 600;")
         page.wait_for_timeout(150)
         if row.count() > 0:
             return row

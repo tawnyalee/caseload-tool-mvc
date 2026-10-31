@@ -244,6 +244,8 @@ class ActionRunner:
                 "Note step not run — this action doesn't send email, and texts are noted automatically by Mongoose"
             )
         summary = ActionRunSummary()
+        if writes_note:
+            self.note_writer.start_run()
         try:
             for position, student in enumerate(students, start=1):
                 if self._stopped(control, students[position - 1:], summary):
@@ -279,6 +281,8 @@ class ActionRunner:
                             StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
                         )
         finally:
+            if writes_note:
+                self.note_writer.finish_run()
             if texting:
                 self.text_sender.finish()
 
@@ -374,31 +378,37 @@ class ActionRunner:
         summary = ActionRunSummary()
         if any(not t.problem for t in to_run):
             self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
-        for position, task_email in enumerate(to_run, start=1):
-            student = task_email.student
-            if self._stopped(control, [t.student for t in to_run[position - 1:]], summary):
-                break
-            if control:
-                control.report(position, len(to_run), student.full_name)
-            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
-            if task_email.problem:
-                self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {task_email.problem}")
-                summary.results.append(
-                    StepResult(student=student, step_type="email", outcome="skipped", detail=task_email.problem)
-                )
-                continue
-            result = self._send_email(student, task_email.subject, task_email.body, signature)
-            summary.results.append(result)
-            if result.outcome == "success":
-                note_body = html_to_plain_text(render_merge_fields(task_email.body, student))
-                summary.results.append(self._attempt_note(
-                    student, task_email.subject, note_body, task_email.subject,
-                    course_code=task_email.group.scoped_course_code,
-                ))
-            else:
-                detail = "Email was not sent successfully"
-                self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
-                summary.results.append(StepResult(student=student, step_type="note", outcome="skipped", detail=detail))
+        self.note_writer.start_run()
+        try:
+            for position, task_email in enumerate(to_run, start=1):
+                student = task_email.student
+                if self._stopped(control, [t.student for t in to_run[position - 1:]], summary):
+                    break
+                if control:
+                    control.report(position, len(to_run), student.full_name)
+                self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
+                if task_email.problem:
+                    self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {task_email.problem}")
+                    summary.results.append(
+                        StepResult(student=student, step_type="email", outcome="skipped", detail=task_email.problem)
+                    )
+                    continue
+                result = self._send_email(student, task_email.subject, task_email.body, signature)
+                summary.results.append(result)
+                if result.outcome == "success":
+                    note_body = html_to_plain_text(render_merge_fields(task_email.body, student))
+                    summary.results.append(self._attempt_note(
+                        student, task_email.subject, note_body, task_email.subject,
+                        course_code=task_email.group.scoped_course_code,
+                    ))
+                else:
+                    detail = "Email was not sent successfully"
+                    self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                    summary.results.append(
+                        StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
+                    )
+        finally:
+            self.note_writer.finish_run()
         self.activity_logger.log(
             f"Task-email run complete — {summary.succeeded} succeeded, "
             f"{summary.failed} failed, {summary.skipped} skipped"
@@ -479,26 +489,32 @@ class ActionRunner:
         has_note_content = bool(note_subject or note_body or follow_up_note)
         summary = ActionRunSummary()
 
-        for position, student in enumerate(students, start=1):
-            if self._stopped(control, students[position - 1:], summary):
-                break
-            if control:
-                control.report(position, len(students), student.full_name)
-            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
-            result = self._send_email(student, subject, body, signature)
-            summary.results.append(result)
+        if has_note_content:
+            self.note_writer.start_run()
+        try:
+            for position, student in enumerate(students, start=1):
+                if self._stopped(control, students[position - 1:], summary):
+                    break
+                if control:
+                    control.report(position, len(students), student.full_name)
+                self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
+                result = self._send_email(student, subject, body, signature)
+                summary.results.append(result)
 
+                if has_note_content:
+                    if result.outcome == "success":
+                        summary.results.append(
+                            self._attempt_note(student, note_subject, note_body, follow_up_note)
+                        )
+                    else:
+                        detail = "Email was not sent successfully"
+                        self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                        summary.results.append(
+                            StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
+                        )
+        finally:
             if has_note_content:
-                if result.outcome == "success":
-                    summary.results.append(
-                        self._attempt_note(student, note_subject, note_body, follow_up_note)
-                    )
-                else:
-                    detail = "Email was not sent successfully"
-                    self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
-                    summary.results.append(
-                        StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
-                    )
+                self.note_writer.finish_run()
 
         self.activity_logger.log(
             f"Ad-hoc send complete — {summary.succeeded} succeeded, "
