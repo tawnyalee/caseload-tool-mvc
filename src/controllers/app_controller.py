@@ -10,6 +10,7 @@ from src.views.add_action_view import AddActionView
 from src.services.app_settings_repository import AppSettingsRepository
 from src.services.group_repository import GroupRepository
 from src.services.task_emails import MAX_LOOK_BACK_DAYS, batches_for_review, parse_look_back_days
+from src.services.text_sender import MAX_TEXT_LENGTH
 from src.services.action_repository import ActionRepository
 from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
@@ -28,6 +29,7 @@ from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter, l
 from src.services.mongoose_text_sender import DRY_RUN, REVIEW, MongooseTextSender
 from src.services.note_writer import PlaywrightNoteWriter
 from src.services import salesforce_browser_session
+from src.services.browser_launch import playwright_session
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
 )
@@ -312,10 +314,8 @@ class AppController:
         """Opens the visible login window and waits for the professor to log
         in themselves. The session is kept in memory only (see
         salesforce_browser_session.py)."""
-        from playwright.sync_api import sync_playwright
-
         self.activity_logger.log("Opening the Salesforce login window...")
-        with sync_playwright() as playwright:
+        with playwright_session() as playwright:
             salesforce_browser_session.log_in_interactively(
                 playwright, target_url=CASELOAD_APP_URL, logged_in_selector=EXPORT_BUTTON_SELECTOR,
             )
@@ -1137,6 +1137,14 @@ class AppController:
                 "Validation Error",
                 "Choose your Outlook signature before saving. If the list has none, "
                 "set one up in Outlook (classic), then reopen this Action.",
+            )
+            return False
+
+        text_length = len(action_data.get("text_body", ""))
+        if action_data.get("is_text") and text_length > MAX_TEXT_LENGTH:
+            messagebox.showwarning(
+                "Validation Error",
+                f"The text message is {text_length} characters. It can be at most {MAX_TEXT_LENGTH}.",
             )
             return False
 

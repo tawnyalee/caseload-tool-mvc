@@ -10,6 +10,10 @@ from typing import List, Optional, Set
 from src.models.student import Student
 
 
+# The most Mongoose should get in one text (developer, 2026-10-31).
+MAX_TEXT_LENGTH = 150
+
+
 class TextSkipped(Exception):
     """A text deliberately not sent - e.g. the student isn't in the course's
     Mongoose department. The run lists it as skipped (to handle by hand),

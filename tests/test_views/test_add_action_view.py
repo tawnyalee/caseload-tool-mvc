@@ -364,3 +364,14 @@ def test_course_code_choices_combine_settings_courses_with_the_roster(ctk_root, 
     groups = [Group(name="D424", group_id="G1", is_course=True, course_code="D424")]
     view = AddActionView(master=ctk_root, controller=MockControllerWithStudents(FakeStudentDataProvider(file_path=str(fixture))), groups=groups)
     assert view._get_live_field_values("course_code") == ["D424", "E210"]
+
+
+def test_text_length_count_turns_into_a_warning_past_150(ctk_root):
+    view = AddActionView(master=ctk_root, controller=MockController())
+    view.text_body.insert("0.0", "x" * 150)
+    view._update_text_length()
+    assert view.text_length_label.cget("text") == "150 of 150 characters"
+
+    view.text_body.insert("end", "x")
+    view._update_text_length()
+    assert view.text_length_label.cget("text") == "151 of 150 characters - too long, please shorten it"

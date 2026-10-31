@@ -140,7 +140,7 @@ Texting is **new and still being tested**. When an Action has **Send Text** chec
 - Each one is **scheduled**, never sent instantly: for the next time between **10 AM and 8 PM in the student's own time zone**.
 - **For now, you finish each text yourself.** The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.
 - The **Text Subject** becomes the text's **Message Name** in Mongoose. Fields like **{{student_name}}** work in the text and its subject.
-- A text longer than about 160 characters may arrive in parts; the log warns you.
+- A text can be at most **150 characters**. The Action shows a live count, and Save Action refuses a longer one. Fields like {{student_name}} count as written, so leave some room: if a filled-in text comes out over 150, that student is skipped and listed in the results.
 - A student is **skipped and listed** in the results when the app can't place them safely: no texting ID (try **↻ Refresh Caseload**), no time zone, or not found in that course's Mongoose department (for example, they opted out). Text those students by hand if needed.
 - Texts never write a Salesforce note — Mongoose notes them itself.
 

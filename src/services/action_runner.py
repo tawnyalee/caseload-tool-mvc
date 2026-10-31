@@ -39,7 +39,7 @@ from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
 from src.services.task_emails import TaskEmail, build_task_email, html_to_plain_text, passed_in_look_back
 from src.services.task_utils import passed_task_number
-from src.services.text_sender import TextSender, TextSkipped
+from src.services.text_sender import MAX_TEXT_LENGTH, TextSender, TextSkipped
 
 
 class RunControl:
@@ -69,8 +69,6 @@ class RunControl:
 
 
 STOPPED_DETAIL = "Run was stopped before this student"
-# Characters in one standard text message; longer ones may arrive in parts.
-SINGLE_TEXT_LENGTH = 160
 
 def in_group_course(student: Student, course_code: str) -> bool:
     """An action in a COURSE group only reaches students in that course
@@ -229,10 +227,10 @@ class ActionRunner:
             self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
         texting = action.is_text and bool(students)
         if texting:
-            if len(action.text_body) > SINGLE_TEXT_LENGTH:
+            if len(action.text_body) > MAX_TEXT_LENGTH:
                 self.activity_logger.log(
                     f"[TEXT LENGTH] The text is {len(action.text_body)} characters before personalizing "
-                    f"(one text holds about {SINGLE_TEXT_LENGTH}); it may arrive in parts"
+                    f"(the limit is {MAX_TEXT_LENGTH}); shorten it on the Action"
                 )
             self.text_sender.ensure_ready()  # e.g. log in to Mongoose once, before the first student
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
@@ -605,6 +603,12 @@ class ActionRunner:
         # (Mongoose's "Message Name"); merge fields work in both.
         body = render_merge_fields(action.text_body, student)
         message_name = render_merge_fields(action.text_subject, student) or action.name
+        if len(body) > MAX_TEXT_LENGTH:
+            # Mongoose stalls on a text this long. It can get here from an
+            # older action, or from a merge field filling in a long value.
+            detail = f"Text is {len(body)} characters, over the {MAX_TEXT_LENGTH} limit - not sent"
+            self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {detail}")
+            return StepResult(student=student, step_type="text", outcome="skipped", detail=detail)
         try:
             what = self.text_sender.send(student, body, message_name)
             self.activity_logger.log(f"[TEXT] {what} - {student.full_name}")

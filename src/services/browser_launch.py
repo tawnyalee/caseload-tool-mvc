@@ -15,13 +15,47 @@ a brand-new device. The profile keeps what any browser keeps - the
 password, unless the professor chooses to let Edge save it, same as their
 own browser. The app itself still never sees or stores credentials.
 """
+import threading
+from contextlib import contextmanager
+from typing import Iterator
 from urllib.parse import urlparse
 
-from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError, Playwright
+from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError, Playwright, sync_playwright
 
 from src.services import app_paths
 
 BROWSER_CHANNEL = "msedge"
+
+_this_thread = threading.local()
+
+
+def acquire_playwright() -> Playwright:
+    """The one Playwright connection for this thread. Playwright's sync API
+    allows only one at a time per thread, and an email-and-text run needs
+    Mongoose and the notes browser open together, so everything shares it
+    (found live 2026-10-31: every note in such a run failed). Pair each call
+    with release_playwright(); the last release stops it."""
+    if getattr(_this_thread, "users", 0) == 0:
+        _this_thread.playwright = sync_playwright().start()
+        _this_thread.users = 0
+    _this_thread.users += 1
+    return _this_thread.playwright
+
+
+def release_playwright() -> None:
+    _this_thread.users -= 1
+    if _this_thread.users == 0:
+        _this_thread.playwright.stop()
+        _this_thread.playwright = None
+
+
+@contextmanager
+def playwright_session() -> Iterator[Playwright]:
+    playwright = acquire_playwright()
+    try:
+        yield playwright
+    finally:
+        release_playwright()
 
 PROFILE_IN_USE_MESSAGE = (
     "Another login window from this app is already open. "

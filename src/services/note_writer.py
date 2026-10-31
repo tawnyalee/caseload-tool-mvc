@@ -8,6 +8,7 @@ integration plan).
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Callable, List, Optional, Set
 
+from src.services.browser_launch import acquire_playwright, playwright_session, release_playwright
 from src.services.salesforce_browser_session import (
     EXPIRED_MESSAGE,
     SessionExpiredError,
@@ -140,14 +141,12 @@ class PlaywrightNoteWriter(NoteWriter):
                 pass
         if self._playwright is not None:
             try:
-                self._playwright.stop()
+                release_playwright()
             except Exception:
                 pass
         self._playwright = self._context = self._page = None
 
     def _open_shared_page(self, salesforce_id: str) -> "Page":
-        from playwright.sync_api import sync_playwright
-
         url = self.student_record_url_template.format(salesforce_id=salesforce_id)
         if self._page is not None and self._reload_before_next_note:
             self._reload_before_next_note = False
@@ -158,7 +157,7 @@ class PlaywrightNoteWriter(NoteWriter):
             except Exception:
                 self._close_shared_page()  # the browser died while idle: start over
         if self._page is None:
-            self._playwright = sync_playwright().start()
+            self._playwright = acquire_playwright()
             self._context = open_authenticated_context(self._playwright, headless=self.headless)
             self._page = self._context.new_page()
             self._go_to(url)
@@ -189,9 +188,7 @@ class PlaywrightNoteWriter(NoteWriter):
             self._run_on_shared_page(salesforce_id, action)
             return
 
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as playwright:
+        with playwright_session() as playwright:
             context = open_authenticated_context(playwright, headless=self.headless)
             try:
                 page = context.new_page()

@@ -1084,6 +1084,17 @@ def test_nobody_to_email_says_so_with_the_reasons(mock_modal, mock_info):
 
 
 @patch("src.controllers.app_controller.messagebox.showwarning")
+def test_text_action_cant_be_saved_over_150_characters(mock_warning):
+    controller = MagicMock()
+
+    saved = AppController.save_action(controller, {"name": "Check in", "is_text": True, "text_body": "x" * 151})
+
+    assert saved is False
+    assert "151 characters" in mock_warning.call_args[0][1] and "at most 150" in mock_warning.call_args[0][1]
+    controller.action_repo.save_action.assert_not_called()
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
 def test_email_action_cant_be_saved_with_the_no_signatures_message(mock_warning):
     controller = MagicMock()
 

@@ -5,6 +5,7 @@ import pytest
 
 from src.models.group import Group
 from src.models.student import Student
+from src.models.action import Action
 from src.models.email_template import EmailTemplate
 from src.services.action_runner import ActionRunner, RunControl
 from src.services.app_settings_repository import AppSettingsRepository
@@ -14,7 +15,7 @@ from src.services.task_emails import (
     batches_for_review, build_task_email, html_to_plain_text, parse_look_back_days, passed_in_look_back,
 )
 from src.services.task_utils import passed_task_number
-from src.services.text_sender import FakeTextSender
+from src.services.text_sender import FakeTextSender, TextSkipped
 
 MONDAY = date(2026, 11, 2)
 
@@ -237,3 +238,34 @@ def test_notes_share_one_run_even_when_an_email_run_fails_partway():
     assert summary.failed == 1
     runner.note_writer.start_run.assert_called_once()
     runner.note_writer.finish_run.assert_called_once()
+
+
+def test_an_email_and_text_action_still_writes_the_note_when_the_text_is_skipped():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    runner.text_sender.send.side_effect = TextSkipped("Nobody by that ID in this department")
+    action = Action(
+        name="Welcome", is_email=True, is_text=True, template_id="T3", email_subject="Hi", email_signature="Sig",
+        text_body="Hello", note_subject="Welcome Email", note_body="Sent", follow_up_note="Welcome Email",
+    )
+
+    summary = runner.run(action, group_name="D424")
+
+    assert [(r.step_type, r.outcome) for r in summary.results] == [
+        ("email", "success"), ("text", "skipped"), ("note", "success"),
+    ]
+    assert runner.note_writer.written[0]["subject"] == "Welcome Email"
+
+
+def test_a_text_over_the_limit_is_skipped_and_never_reaches_mongoose():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    action = Action(
+        name="Check in", is_text=True, template_id=None, text_body="{{student_name}}" + "x" * 148,
+    )
+
+    summary = runner.run(action, group_name="D424")
+
+    runner.text_sender.send.assert_not_called()
+    assert summary.results[0].outcome == "skipped"
+    assert "152 characters" in summary.results[0].detail

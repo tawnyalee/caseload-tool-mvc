@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from src.models.student import Student
+from src.services.browser_launch import playwright_session
 from src.services.caseload_grid import ContactIdReport, GridCapture, apply_contact_ids
 from src.services.csv_student_import import parse_students_csv
 from src.services.salesforce_browser_session import (
@@ -131,9 +132,7 @@ class PlaywrightStudentDataProvider(StudentDataProvider):
     def get_students(self) -> List[Student]:
         import shutil
 
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as playwright:
+        with playwright_session() as playwright:
             context = open_authenticated_context(playwright, headless=self.headless)
             grid = GridCapture()
             context.on("response", grid.on_response)

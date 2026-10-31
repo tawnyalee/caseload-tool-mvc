@@ -4,7 +4,9 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from src.services import app_paths
-from src.services.browser_launch import BROWSER_CHANNEL, launch_browser, launch_login_context
+from src.services.browser_launch import (
+    BROWSER_CHANNEL, acquire_playwright, launch_browser, launch_login_context, playwright_session, release_playwright,
+)
 
 
 def test_launches_the_installed_edge():
@@ -66,3 +68,25 @@ def test_profile_held_by_another_edge_is_not_reported_as_edge_missing():
     )
     with pytest.raises(RuntimeError, match="Another login window from this app is already open"):
         launch_login_context(playwright)
+
+
+def test_two_users_on_one_thread_share_a_real_playwright_connection():
+    # What failed live: Mongoose held a connection when the note step wanted one.
+    first = acquire_playwright()
+    try:
+        with playwright_session() as second:
+            assert second is first
+    finally:
+        release_playwright()
+
+
+def test_the_last_user_stops_the_connection(monkeypatch):
+    fake = MagicMock()
+    monkeypatch.setattr("src.services.browser_launch.sync_playwright", lambda: fake)
+
+    acquire_playwright()
+    acquire_playwright()
+    release_playwright()
+    fake.start.return_value.stop.assert_not_called()
+    release_playwright()
+    fake.start.return_value.stop.assert_called_once()

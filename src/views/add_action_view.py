@@ -7,6 +7,7 @@ from src.views.date_picker import DatePickerEntry
 from src.views.merge_field_picker import create_merge_field_menu
 from src.services.filterable_fields import FILTERABLE_FIELDS, Operator
 from src.services.outlook_signature_provider import get_signature_names_or_fallback
+from src.services.text_sender import MAX_TEXT_LENGTH
 import tkinter.messagebox as messagebox
 
 class AddActionView(ctk.CTkFrame):
@@ -355,6 +356,7 @@ class AddActionView(ctk.CTkFrame):
             if "body" in text_config and text_config["body"]:
                 self.text_body.delete("0.0", "end")
                 self.text_body.insert("0.0", text_config["body"])
+                self._update_text_length()
         else:
             self.send_text_var.set("off")
             self._toggle_text_section()
@@ -737,6 +739,14 @@ class AddActionView(ctk.CTkFrame):
         )
         self.email_signature_dropdown.pack(anchor="w", padx=10, pady=(2, 10))
 
+    def _update_text_length(self):
+        length = len(self.text_body.get("0.0", "end-1c"))
+        over = length > MAX_TEXT_LENGTH
+        self.text_length_label.configure(
+            text=f"{length} of {MAX_TEXT_LENGTH} characters" + (" - too long, please shorten it" if over else ""),
+            text_color="#b22222" if over else ("gray35", "gray65"),
+        )
+
     def _select_default_signature(self):
         """A new action starts on the default from Settings, if there is one."""
         default = getattr(self.controller, "default_signature", "")
@@ -771,7 +781,11 @@ class AddActionView(ctk.CTkFrame):
         lbl.pack(anchor="w", padx=10, pady=5)
 
         self.text_body = ctk.CTkTextbox(self.text_container, height=60)
-        self.text_body.pack(fill="x", padx=10, pady=(2, 10))
+        self.text_body.pack(fill="x", padx=10, pady=(2, 0))
+        self.text_length_label = ctk.CTkLabel(self.text_container, text="", anchor="w", justify="left")
+        self.text_length_label.pack(anchor="w", padx=10, pady=(0, 10))
+        self.text_body.bind("<KeyRelease>", lambda _event: self._update_text_length())
+        self._update_text_length()
 
     # =========================================================================
     # EVENT HANDLERS & DIALOGS

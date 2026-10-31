@@ -119,7 +119,7 @@ def _shared_writer(monkeypatch, opened):
         return context
 
     monkeypatch.setattr("src.services.note_writer.open_authenticated_context", fake_open)
-    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: MagicMock())
+    monkeypatch.setattr("src.services.browser_launch.sync_playwright", lambda: MagicMock())
     return PlaywrightNoteWriter(
         student_record_url_template="https://example.test/caseload",
         write_note_fn=MagicMock(), update_follow_up_fn=MagicMock(),
@@ -211,3 +211,12 @@ def test_finish_run_is_safe_when_no_note_was_written(monkeypatch):
     writer.finish_run()
 
     assert opened == []
+
+
+@pytest.fixture(autouse=True)
+def _no_connection_left_for_other_tests():
+    """Shared-browser tests leave their stand-in connection open on purpose."""
+    from src.services import browser_launch
+
+    yield
+    browser_launch._this_thread.users = 0

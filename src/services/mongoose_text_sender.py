@@ -24,7 +24,9 @@ from datetime import datetime
 from typing import Optional
 
 from src.models.student import Student
-from src.services.browser_launch import clear_cached_pages, launch_login_context
+from src.services.browser_launch import (
+    acquire_playwright, clear_cached_pages, launch_login_context, release_playwright,
+)
 from src.services.mongoose_browser_session import MONGOOSE_URL
 from src.services.mongoose_compose import (
     LOGGED_IN_SELECTOR, NoMongooseMatch, ScheduledText, compose_scheduled_text,
@@ -66,9 +68,9 @@ class MongooseTextSender(TextSender):
     def ensure_ready(self) -> None:
         if self._page is not None:
             return
-        from playwright.sync_api import Error as PlaywrightError, sync_playwright
+        from playwright.sync_api import Error as PlaywrightError
 
-        self._playwright = sync_playwright().start()
+        self._playwright = acquire_playwright()
         try:
             self._context = launch_login_context(self._playwright, headless=False)
             self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
@@ -166,7 +168,7 @@ class MongooseTextSender(TextSender):
                 pass
         if self._playwright is not None:
             try:
-                self._playwright.stop()
+                release_playwright()
             except Exception:
                 pass
         self._playwright = self._context = self._page = None
