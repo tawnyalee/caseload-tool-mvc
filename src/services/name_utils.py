@@ -16,10 +16,11 @@ def resolve_first_last_name(name: str, preferred_name: str = "") -> tuple[str, s
     to address the student by.
 
     The preferred name wins for the first name when present; otherwise the
-    first name is everything before the first space in Name. The chosen
-    first name is normalized to a single capital letter regardless of how
-    it was entered, since there's no data-entry validation on these fields
-    upstream. last_name is left as-is (not used for greetings, and blindly
+    first name is everything before the first space in Name. A first name
+    in all caps or all lowercase gets a single capital letter, since
+    there's no data-entry validation on these fields upstream. Mixed case
+    is kept exactly as entered, so "DeShawn" stays "DeShawn" (developer,
+    2026-10-31). last_name is left as-is (not used for greetings, and blindly
     capitalizing it risks mangling multi-word or hyphenated surnames).
     """
     name = (name or "").strip()
@@ -30,4 +31,6 @@ def resolve_first_last_name(name: str, preferred_name: str = "") -> tuple[str, s
     last_name = parts[1] if len(parts) > 1 else ""
 
     first_name = preferred_name if preferred_name else default_first
-    return first_name.capitalize(), last_name
+    if first_name.isupper() or first_name.islower():
+        first_name = first_name.capitalize()
+    return first_name, last_name

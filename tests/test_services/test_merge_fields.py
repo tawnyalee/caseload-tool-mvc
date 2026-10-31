@@ -1,4 +1,5 @@
 from src.models.student import Student
+from src.services.csv_student_import import csv_row_to_student_fields
 from src.services.merge_fields import MERGE_FIELDS, render_merge_fields
 
 
@@ -12,7 +13,7 @@ def test_registry_has_exactly_the_five_supported_fields():
     assert set(MERGE_FIELDS.keys()) == {
         "student_name", "course_code", "last_submitted_task", "last_passed_task", "next_task",
     }
-    assert MERGE_FIELDS["student_name"].label == "Student Name"
+    assert MERGE_FIELDS["student_name"].label == "Student First Name"
     assert MERGE_FIELDS["course_code"].label == "Course Code"
     assert MERGE_FIELDS["last_submitted_task"].label == "Last Submitted Task"
     assert MERGE_FIELDS["last_passed_task"].label == "Last Passed Task"
@@ -21,7 +22,7 @@ def test_registry_has_exactly_the_five_supported_fields():
 
 def test_render_replaces_student_name():
     student = _student(first_name="Jane", last_name="Doe")
-    assert render_merge_fields("Hi, {{student_name}}!", student) == "Hi, Jane Doe!"
+    assert render_merge_fields("Hi, {{student_name}}!", student) == "Hi, Jane!"
 
 
 def test_render_replaces_course_code():
@@ -32,7 +33,7 @@ def test_render_replaces_course_code():
 def test_render_replaces_repeated_occurrences_of_the_same_token():
     student = _student(first_name="Jane", last_name="Doe")
     text = "{{student_name}} {{student_name}}"
-    assert render_merge_fields(text, student) == "Jane Doe Jane Doe"
+    assert render_merge_fields(text, student) == "Jane Jane"
 
 
 def test_render_leaves_unrecognized_tokens_untouched():
@@ -90,3 +91,13 @@ def test_render_combines_all_three_task_fields_in_one_message():
     student = _student(latest_task_number=2, latest_task_status="Passed")
     text = "Congrats on passing {{last_passed_task}}! Do you need help with {{next_task}}?"
     assert render_merge_fields(text, student) == "Congrats on passing Task 2! Do you need help with Task 3?"
+
+
+def test_student_name_is_the_preferred_name_when_salesforce_has_one():
+    fields = csv_row_to_student_fields({"Name": "JANE DOE", "stuprename": "janie"})
+    assert render_merge_fields("Hello, {{student_name}}", Student(salesforce_id="S1", **{k: fields[k] for k in ("first_name", "last_name")}, email="x@example.test")) == "Hello, Janie"
+
+
+def test_student_name_is_the_first_name_when_there_is_no_preferred_name():
+    fields = csv_row_to_student_fields({"Name": "JANE DOE", "stuprename": ""})
+    assert fields["first_name"] == "Jane"

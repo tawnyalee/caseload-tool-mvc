@@ -48,7 +48,9 @@ def _next_task(student: Student) -> str:
 
 
 MERGE_FIELDS: Dict[str, MergeField] = {
-    "student_name": MergeField("{{student_name}}", "Student Name", lambda s: s.full_name),
+    # The name to greet them by: first_name is the preferred name when there
+    # is one (name_utils). Never the full name (developer, 2026-10-31).
+    "student_name": MergeField("{{student_name}}", "Student First Name", lambda s: s.first_name),
     "course_code": MergeField("{{course_code}}", "Course Code", lambda s: s.course_code),
     "last_submitted_task": MergeField("{{last_submitted_task}}", "Last Submitted Task", _last_submitted_task),
     "last_passed_task": MergeField("{{last_passed_task}}", "Last Passed Task", _last_passed_task),

@@ -113,10 +113,10 @@ def test_email_subject_and_body_render_merge_fields_per_student(tmp_path):
     runner.run(action, group_name="General")
 
     sent_by_email = {s["to"]: s for s in email_sender.sent}
-    assert sent_by_email["jane@example.test"]["subject"] == "Hi Jane Doe!"
-    assert sent_by_email["jane@example.test"]["body"] == "Hi Jane Doe, welcome to D424!"
-    assert sent_by_email["john@example.test"]["subject"] == "Hi John Roe!"
-    assert sent_by_email["john@example.test"]["body"] == "Hi John Roe, welcome to D370!"
+    assert sent_by_email["jane@example.test"]["subject"] == "Hi Jane!"
+    assert sent_by_email["jane@example.test"]["body"] == "Hi Jane, welcome to D424!"
+    assert sent_by_email["john@example.test"]["subject"] == "Hi John!"
+    assert sent_by_email["john@example.test"]["body"] == "Hi John, welcome to D370!"
 
 
 def test_ad_hoc_email_also_renders_merge_fields_per_student(tmp_path):
@@ -128,8 +128,8 @@ def test_ad_hoc_email_also_renders_merge_fields_per_student(tmp_path):
 
     runner.send_ad_hoc_email(subject="Hi {{student_name}}", body="Hello, {{student_name}}.")
 
-    assert email_sender.sent[0]["subject"] == "Hi Jane Doe"
-    assert email_sender.sent[0]["body"] == "Hello, Jane Doe."
+    assert email_sender.sent[0]["subject"] == "Hi Jane"
+    assert email_sender.sent[0]["body"] == "Hello, Jane."
 
 
 def test_run_only_processes_students_matching_the_actions_filters(tmp_path):
@@ -250,7 +250,7 @@ def test_email_subject_and_body_overrides_replace_the_actions_own_content(tmp_pa
         email_body_override="Overridden body.",
     )
 
-    assert email_sender.sent[0]["subject"] == "Overridden Subject Jane Doe"
+    assert email_sender.sent[0]["subject"] == "Overridden Subject Jane"
     assert email_sender.sent[0]["body"] == "Overridden body."
 
 
@@ -1084,7 +1084,7 @@ def test_texts_get_merge_fields_and_the_subject_becomes_the_message_name(tmp_pat
 
     runner.run(_text_only_action(template.id), group_name="General")
 
-    assert sender.sent == [{"to": "555-0001", "subject": "D424 check-in", "body": "Hi Jane Doe"}]
+    assert sender.sent == [{"to": "555-0001", "subject": "D424 check-in", "body": "Hi Jane"}]
 
 
 def test_a_text_the_sender_skips_is_listed_as_skipped_not_failed(tmp_path):

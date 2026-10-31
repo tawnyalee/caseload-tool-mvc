@@ -88,7 +88,7 @@ Anyone who can't get an email because none is set up for that task is listed in 
 
 Use **Insert Field** while writing an email subject or body to add details that fill in for each student. You can also type them (with the double braces, e.g. **{{last_passed_task}}**) into **Note Details** — the note subject, body, and follow-up note:
 
-- **Student Name** — `{{student_name}}`
+- **Student First Name** — `{{student_name}}` (their preferred name if Salesforce has one, otherwise their first name, never their full name)
 - **Course Code** — `{{course_code}}`
 - **Last Submitted Task** — `{{last_submitted_task}}`
 - **Last Passed Task** — `{{last_passed_task}}` (blank unless the student's most recent submission passed)

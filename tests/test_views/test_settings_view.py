@@ -139,6 +139,14 @@ def test_a_saved_template_lands_in_its_row_and_every_dropdown(ctk_root):
         view.destroy()
 
 
+def test_the_top_of_settings_explains_the_task_email_greeting(ctk_root):
+    view = SettingsView(ctk_root, groups=[], on_save=lambda *_: None)
+    try:
+        assert "No need to set up a 'Hello, <<name>>'" in view.greeting_note.cget("text")
+    finally:
+        view.destroy()
+
+
 def test_default_signature_shows_and_saves_and_none_clears_it(ctk_root):
     chosen = []
     view = SettingsView(

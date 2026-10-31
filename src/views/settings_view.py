@@ -24,6 +24,10 @@ from src.views.template_editor_modal import TemplateEditorModal
 
 NO_EMAIL = "(no email)"
 NO_DEFAULT_SIGNATURE = "(none)"
+TASK_EMAIL_GREETING_NOTE = (
+    "For any email set for task passed, the first name or preferred name will be used as a greeting. "
+    "No need to set up a 'Hello, <<name>>' in the email template."
+)
 
 
 class _GroupCard(ctk.CTkFrame):
@@ -227,6 +231,11 @@ class SettingsView(ctk.CTkFrame):
         ctk.CTkLabel(self, text="⚙ Settings", font=ctk.CTkFont(size=18, weight="bold")).pack(
             anchor="w", padx=10, pady=(10, 2)
         )
+
+        self.greeting_note = ctk.CTkLabel(
+            self, text=TASK_EMAIL_GREETING_NOTE, text_color=("gray35", "gray65"), wraplength=480, justify="left",
+        )
+        self.greeting_note.pack(anchor="w", padx=10, pady=(0, 4))
 
         # Footer packed before the scrolling list so it can never be pushed out of view.
         footer = ctk.CTkFrame(self, fg_color="transparent")
