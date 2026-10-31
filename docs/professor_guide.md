@@ -71,6 +71,10 @@ An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add 
 6. **Is Group Welcome Email** — check this on the one Action per group that **✉️ Send Welcome Emails** should run.
 7. Click **💾 Save Action**.
 
+### Suggested naming convention
+
+When creating Actions and their emails, we suggest this pattern: `<CourseCode><ActionPurpose>` for the Action and `<CourseCode><ActionPurpose>Email` for its email. For example, **D424Welcome** for an Action and **D424WelcomeEmail** for its email.
+
 ### Task emails: email students who just passed a task
 
 You don't need an Action for this. Set up each course in **⚙ Settings**, choose a **Default Outlook Signature**, then click **🎯 Send Task Emails** on the Dashboard.
