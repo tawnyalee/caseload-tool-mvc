@@ -13,7 +13,9 @@ from typing import Callable, Dict, List, Optional
 
 import customtkinter as ctk
 
-from src.services.filterable_fields import FILTERABLE_FIELDS, FieldKind, Operator
+from src.services.filterable_fields import (
+    FILTERABLE_FIELDS, FieldKind, Operator, field_label, field_label_sort_key,
+)
 from src.views.date_picker import DatePickerEntry
 from src.views.multi_select_entry import MultiSelectEntry
 
@@ -26,7 +28,9 @@ _DAY_COUNT_OPERATORS = {
     Operator.MORE_THAN_DAYS_AGO.value, Operator.WITHIN_NEXT_DAYS.value, Operator.WITHIN_LAST_DAYS.value,
 }
 
-FIELD_NAMES_SORTED = sorted(FILTERABLE_FIELDS.keys())
+# The dropdown shows friendly labels; saved filters keep the field name.
+_LABEL_TO_FIELD_NAME = {field_label(name): name for name in FILTERABLE_FIELDS}
+FIELD_LABELS_SORTED = sorted(_LABEL_TO_FIELD_NAME, key=field_label_sort_key)
 
 
 class FilterRow(ctk.CTkFrame):
@@ -42,8 +46,10 @@ class FilterRow(ctk.CTkFrame):
         self._on_remove = on_remove
         self._value_widgets: List = []
 
+        # Read-only: typing into the box wouldn't fire `command`, leaving the
+        # operator list out of step with the field shown.
         self.field_dropdown = ctk.CTkComboBox(
-            self, values=FIELD_NAMES_SORTED, width=180, command=self._on_field_changed
+            self, values=FIELD_LABELS_SORTED, width=220, state="readonly", command=self._on_field_changed
         )
         self.field_dropdown.pack(side="left", padx=(0, 5))
 
@@ -62,17 +68,23 @@ class FilterRow(ctk.CTkFrame):
         # CTkComboBox's `command` only fires on user interaction, not on
         # .set(), so the initial field/operator/value-widget state has to
         # be wired up manually here to avoid starting out empty/mismatched.
-        if FIELD_NAMES_SORTED:
-            self.field_dropdown.set(FIELD_NAMES_SORTED[0])
-            self._on_field_changed(FIELD_NAMES_SORTED[0])
+        if FIELD_LABELS_SORTED:
+            self.field_dropdown.set(FIELD_LABELS_SORTED[0])
+            self._on_field_changed(FIELD_LABELS_SORTED[0])
 
     def _handle_remove(self) -> None:
         if self._on_remove:
             self._on_remove(self)
         self.destroy()
 
+    def select_field(self, field_name: str) -> None:
+        """Selects a field by its name (as saved in a filter), not its label."""
+        label = field_label(field_name)
+        self.field_dropdown.set(label)
+        self._on_field_changed(label)
+
     def _current_field_def(self):
-        return FILTERABLE_FIELDS.get(self.field_dropdown.get())
+        return FILTERABLE_FIELDS.get(_LABEL_TO_FIELD_NAME.get(self.field_dropdown.get()))
 
     def _on_field_changed(self, _selected_field: str) -> None:
         field_def = self._current_field_def()

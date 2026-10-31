@@ -16,10 +16,7 @@ def ctk_root():
 
 
 def _select_field(row: FilterRow, field_name: str) -> None:
-    """CTkComboBox's command doesn't fire on .set(), so drive the row the
-    same way FilterRow itself has to internally."""
-    row.field_dropdown.set(field_name)
-    row._on_field_changed(field_name)
+    row.select_field(field_name)
 
 
 def _select_operator(row: FilterRow, operator: str) -> None:
@@ -31,6 +28,22 @@ def test_starts_with_a_field_and_matching_operators_selected(ctk_root):
     row = FilterRow(master=ctk_root)
     assert row.field_dropdown.get() != ""
     assert row.operator_dropdown.get() != ""
+
+
+def test_dropdown_shows_friendly_names_but_saves_the_field_name(ctk_root):
+    row = FilterRow(master=ctk_root)
+    assert "Follow-up Note" in row.field_dropdown.cget("values")
+    assert "course_followup_note" not in row.field_dropdown.cget("values")
+
+    row.field_dropdown.set("Follow-up Note")
+    row._on_field_changed("Follow-up Note")
+    _select_operator(row, "IsEmpty")
+
+    assert row.to_condition() == {"field": "course_followup_note", "operator": "IsEmpty"}
+
+
+def test_field_list_cant_be_typed_into(ctk_root):
+    assert FilterRow(master=ctk_root).field_dropdown.cget("state") == "readonly"
 
 
 def test_numeric_field_gets_a_plain_text_entry(ctk_root):

@@ -2,13 +2,13 @@
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
 from src.services import html_richtext as rt
-from src.services.outlook_signature_provider import get_signature_names_or_fallback
+from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, get_signature_names_or_fallback
 from src.views.merge_field_picker import create_merge_field_menu
 
 
 class DashboardView(ctk.CTkFrame):
-    """Three sections, top to bottom: Welcome Emails, Run Action Batch, then
-    Send Email to All Students (with an identical note section to a regular
+    """Four sections, top to bottom: Welcome Emails, Task Emails, Run Action
+    Batch, then Send Email to All Students (with an identical note section to a regular
     Action's note step - not a separate dialog, per developer feedback
     after manual testing). Batch sits right under Welcome Emails, above the
     much longer ad-hoc email section, so it's never scrolled out of view -
@@ -38,7 +38,37 @@ class DashboardView(ctk.CTkFrame):
 
         self._build_divider()
 
-        # --- Section 2: Run Action Batch ---
+        # --- Section 2: Task Emails ---
+        self._build_section_header("🎯 Task Emails")
+        task_row = ctk.CTkFrame(self.scrollable_container, fg_color="transparent")
+        task_row.pack(anchor="w", padx=20, pady=(0, 4))
+        self.btn_send_task_emails = ctk.CTkButton(
+            task_row,
+            text="🎯 Send Task Emails",
+            height=40,
+            font=ctk.CTkFont(weight="bold"),
+            command=self._on_send_task_emails_clicked,
+        )
+        self.btn_send_task_emails.pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(task_row, text="Days to look back:").pack(side="left", padx=(0, 6))
+        self.task_days_entry = ctk.CTkEntry(task_row, width=60, placeholder_text="1")
+        self.task_days_entry.pack(side="left")
+        task_hint = ctk.CTkLabel(
+            self.scrollable_container,
+            text=(
+                "Leave the days blank for tasks passed yesterday. After time off, "
+                "enter the number of days: 3 on a Monday covers Friday through Sunday."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+            wraplength=500,
+            justify="left",
+        )
+        task_hint.pack(anchor="w", padx=20, pady=(0, 10))
+
+        self._build_divider()
+
+        # --- Section 3: Run Action Batch ---
         self._build_section_header("🗂️ Run Action Batch")
         batch_hint = ctk.CTkLabel(
             self.scrollable_container,
@@ -64,7 +94,7 @@ class DashboardView(ctk.CTkFrame):
 
         self._build_divider()
 
-        # --- Section 3: Send Email to All Students (inline, not a modal) ---
+        # --- Section 4: Send Email to All Students (inline, not a modal) ---
         self._build_section_header("📢 Send Email to All Students")
         signature_provider = getattr(controller, "signature_provider", None)
         self._build_ad_hoc_email_section(get_signature_names_or_fallback(signature_provider))
@@ -95,7 +125,7 @@ class DashboardView(ctk.CTkFrame):
             anchor="w", padx=20, pady=(0, 2)
         )
         self.adhoc_signature_dropdown = ctk.CTkComboBox(
-            c, values=signature_names or ["No Outlook signatures found"], width=220
+            c, values=signature_names or [NO_SIGNATURES_FOUND], width=220
         )
         self.adhoc_signature_dropdown.pack(anchor="w", padx=20, pady=(0, 10))
 
@@ -209,6 +239,10 @@ class DashboardView(ctk.CTkFrame):
     def _on_send_welcome_clicked(self) -> None:
         if self.controller and hasattr(self.controller, "handle_send_welcome_emails"):
             self.controller.handle_send_welcome_emails()
+
+    def _on_send_task_emails_clicked(self) -> None:
+        if self.controller and hasattr(self.controller, "handle_send_task_emails"):
+            self.controller.handle_send_task_emails(self.task_days_entry.get())
 
     def _on_send_all_clicked(self) -> None:
         subject = self.adhoc_subject.get().strip()

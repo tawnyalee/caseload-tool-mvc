@@ -47,14 +47,11 @@ class Group:
 
     def task_email_rows(self) -> List[int]:
         """Which passed-task numbers get a "next task" email. Not the last
-        task in a tasks-only course: those students finish the course and
-        drop off the roster, so there's nothing to send (developer,
-        2026-10-27). With an OA too, passing the last task means the OA is
-        next, so it gets a row (for OA prep)."""
+        task: there's no next task to send (developer, 2026-10-27). OAs are
+        left out for now, see task_emails.py."""
         if not (self.is_course and self.has_tasks and self.task_count > 0):
             return []
-        last = self.task_count if self.has_objective_assessment else self.task_count - 1
-        return list(range(1, last + 1))
+        return list(range(1, self.task_count))
 
     def task_email_for(self, passed_task: Optional[int]) -> Optional[dict]:
         """The configured email for a student who just passed `passed_task`,

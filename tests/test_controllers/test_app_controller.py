@@ -15,6 +15,7 @@ from services.action_repository import ActionRepository
 from services.saved_batch_repository import SavedBatchRepository
 from services.action_runner import ActionRunSummary, BatchRunSummary, BatchItemResult, StepResult
 from models.student import Student
+from src.services.task_emails import TaskEmail
 
 # AppController itself (imported above via 'controllers.app_controller', no
 # src. prefix - see sys.path.insert above) internally imports these two
@@ -924,6 +925,127 @@ def test_saving_course_settings_updates_groups_by_id_and_persists(mock_showinfo)
     assert (d424.is_course, d424.course_code, d424.task_count, d424.has_objective_assessment) == (True, "D424", 5, True)
     assert other.is_course is False
     controller.group_repo.save_groups.assert_called_once_with(controller.groups)
+
+
+def _task_email_controller(signature="Mine"):
+    controller = MagicMock()
+    controller._is_busy_and_told_user.return_value = False
+    controller._caseload_missing_and_told_user.return_value = False
+    controller.default_signature = signature
+    controller.signature_provider.get_signature_names.return_value = ["Mine"]
+    return controller
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_bad_look_back_days_warn_and_stop(mock_warning):
+    controller = _task_email_controller()
+
+    AppController.handle_send_task_emails(controller, "abc")
+
+    assert "whole number" in mock_warning.call_args[0][1]
+    controller.action_runner.get_task_emails.assert_not_called()
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_task_emails_need_a_default_signature(mock_warning):
+    controller = _task_email_controller(signature="")
+
+    AppController.handle_send_task_emails(controller, "")
+
+    assert "default signature" in mock_warning.call_args[0][1]
+    controller.action_runner.get_task_emails.assert_not_called()
+
+
+def _task_email(sid, passed, email_name, group):
+    student = Student(salesforce_id=sid, first_name="Jane", last_name="Doe", email=f"{sid}@example.test")
+    return TaskEmail(student, group, passed, f"Task {passed + 1} Support", f"<p>Email {email_name}</p>", email_name=email_name)
+
+
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_blank_days_means_yesterday_and_each_email_gets_its_own_review_section(mock_modal):
+    controller = _task_email_controller()
+    group = Group(name="D424", group_id="G1")
+    controller.groups = [group]
+    controller.action_runner.get_task_emails.return_value = {"G1": [
+        _task_email("S1", 2, "task 3", group), _task_email("S2", 1, "Hiya", group), _task_email("S3", 2, "task 3", group),
+    ]}
+
+    AppController.handle_send_task_emails(controller, "")
+
+    controller.action_runner.get_task_emails.assert_called_once_with([group], 1)
+    items = mock_modal.call_args.kwargs["items"]
+    assert [i.label for i in items] == [
+        "D424 — Passed Task 1 — Task 2 Support — Hiya", "D424 — Passed Task 2 — Task 3 Support — task 3",
+    ]
+    assert items[0].preview == "Email Hiya"
+    assert [s.salesforce_id for s in items[1].students] == ["S1", "S3"]
+
+
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_review_selections_from_each_email_section_add_up_by_course(mock_modal):
+    controller = _task_email_controller()
+    group = Group(name="D424", group_id="G1")
+    controller.groups = [group]
+    emails = {"G1": [_task_email("S1", 1, "Hiya", group), _task_email("S2", 2, "task 3", group)]}
+    controller.action_runner.get_task_emails.return_value = emails
+    AppController.handle_send_task_emails(controller, "")
+    modal_kwargs = mock_modal.call_args.kwargs
+    keys = [i.key for i in modal_kwargs["items"]]
+
+    modal_kwargs["on_confirm"]({keys[0]: {"S1"}, keys[1]: {"S2"}})
+    run = controller._run_in_background.call_args[0][1]
+    run("control")
+
+    controller.action_runner.run_task_emails.assert_called_once_with(
+        emails, "Mine", included_ids_by_group_id={"G1": {"S1", "S2"}}, control="control",
+    )
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_nobody_to_email_says_so_with_the_reasons(mock_modal, mock_info):
+    controller = _task_email_controller()
+    group = Group(name="D424", group_id="G1")
+    controller.groups = [group]
+    stuck = _task_email("S1", 1, "", group)
+    stuck.problem = "No task email set up for D424 Task 1 (see Settings)"
+    controller.action_runner.get_task_emails.return_value = {"G1": [stuck]}
+
+    AppController.handle_send_task_emails(controller, "")
+
+    mock_modal.assert_not_called()
+    assert "No task email set up for D424 Task 1" in mock_info.call_args[0][1]
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_email_action_cant_be_saved_with_the_no_signatures_message(mock_warning):
+    controller = MagicMock()
+
+    saved = AppController.save_action(controller, {
+        "name": "D424Welcome", "is_email": True, "email_signature": "No Outlook signatures found",
+    })
+
+    assert saved is False
+    assert "Choose your Outlook signature" in mock_warning.call_args[0][1]
+    controller.action_repo.save_action.assert_not_called()
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("src.controllers.app_controller.messagebox.showwarning")
+def test_course_settings_save_names_what_wasnt_saved(mock_warning, mock_info):
+    controller = MagicMock()
+    d424 = Group(name="D424", group_id="G1")
+    controller.groups = [d424]
+
+    AppController.handle_save_course_settings(controller, {"G1": {
+        "is_course": True, "course_code": "D424", "has_tasks": True, "task_count": 5,
+        "has_objective_assessment": False,
+    }}, ["C769: enter how many tasks (a whole number, 1 or more)."])
+
+    assert d424.task_count == 5
+    controller.group_repo.save_groups.assert_called_once_with(controller.groups)
+    assert "C769: enter how many tasks" in mock_warning.call_args[0][1]
+    mock_info.assert_not_called()
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")

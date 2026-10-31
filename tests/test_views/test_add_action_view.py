@@ -72,8 +72,7 @@ def test_get_action_data_omits_incomplete_filter_rows(ctk_root):
 def test_get_action_data_includes_a_completed_filter_row(ctk_root):
     view = AddActionView(master=ctk_root, controller=MockController())
     row = view.filter_rows[0]
-    row.field_dropdown.set("salesforce_id")
-    row._on_field_changed("salesforce_id")
+    row.select_field("salesforce_id")
     row.operator_dropdown.set("Equals")
     row._on_operator_changed("Equals")
     row._value_widgets[0].insert(0, "000000001")

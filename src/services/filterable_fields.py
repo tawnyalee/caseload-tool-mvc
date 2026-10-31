@@ -8,6 +8,7 @@ each other.
 Built directly from docs/filter_engine_requirements.md - don't add, remove,
 or change an entry here without updating that doc to match, and vice versa.
 """
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
@@ -156,3 +157,23 @@ FILTERABLE_FIELDS: Dict[str, FilterableField] = {
         fixed_values=ASSESSMENT_STATUS_VALUES,
     ),
 }
+
+# Only the names that plain title-casing would get wrong or leave unclear.
+_FIELD_LABEL_OVERRIDES = {
+    "course_followup_note": "Follow-up Note",
+    "last_sm_contact": "Last SM Contact",
+    "salesforce_id": "Student ID",
+    "term_remaining_cu": "Term Remaining CU",
+    "term_sap": "Term SAP",
+}
+
+
+def field_label(field_name: str) -> str:
+    """What the professor sees for a field. Display only: saved filters and
+    the filter engine always use the field name."""
+    return _FIELD_LABEL_OVERRIDES.get(field_name, field_name.replace("_", " ").title())
+
+
+def field_label_sort_key(label: str) -> List:
+    """Sorts numbers by value, so Task 2 comes before Task 10."""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", label)]

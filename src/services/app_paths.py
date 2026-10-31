@@ -79,6 +79,10 @@ def templates_file() -> Path:
     return data_dir() / "templates.json"
 
 
+def app_settings_file() -> Path:
+    return data_dir() / "app_settings.json"
+
+
 def saved_batches_file() -> Path:
     return data_dir() / "saved_batches.json"
 

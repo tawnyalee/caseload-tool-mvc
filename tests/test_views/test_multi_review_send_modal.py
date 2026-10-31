@@ -30,6 +30,35 @@ def _items():
     ]
 
 
+def test_a_students_detail_shows_after_their_id(ctk_root):
+    item = ReviewItem(
+        key="G1", label="D424 — Task Emails", students=[_student("SF1", "Jane", "Doe"), _student("SF2", "John", "Roe")],
+        student_details={"SF1": "Task 1"},
+    )
+    modal = MultiReviewSendModal(master=ctk_root, title="Send Task Emails", items=[item])
+
+    def checkbox_texts(widget):
+        found = [widget.cget("text")] if isinstance(widget, ctk.CTkCheckBox) else []
+        return found + [text for child in widget.winfo_children() for text in checkbox_texts(child)]
+
+    assert checkbox_texts(modal) == ["Jane Doe  (ID: SF1)  Task 1", "John Roe  (ID: SF2)"]
+    modal.destroy()
+
+
+def test_a_section_with_a_preview_shows_the_email_read_only(ctk_root):
+    item = ReviewItem(key="G1", label="D424", students=[_student("SF1", "Jane", "Doe")], preview="Hello Jane,")
+    modal = MultiReviewSendModal(master=ctk_root, title="Send Task Emails", items=[item])
+
+    def boxes(widget):
+        found = [widget] if isinstance(widget, ctk.CTkTextbox) else []
+        return found + [box for child in widget.winfo_children() for box in boxes(child)]
+
+    box = boxes(modal)[0]
+    assert box.get("1.0", "end-1c") == "Hello Jane,"
+    assert box.cget("state") == "disabled"
+    modal.destroy()
+
+
 def test_confirm_and_cancel_are_anchored_to_the_bottom_of_the_window(ctk_root):
     """Regression coverage for the same class of bug fixed in
     ReviewSendModal: with multiple items each potentially having many

@@ -23,6 +23,7 @@ cancellation notice).
 """
 import threading
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from src.models.action import Action
@@ -36,7 +37,8 @@ from src.services.note_records import NoteInsertRecord, resolve_course_code, val
 from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
-from src.services.task_utils import is_latest_task_passed
+from src.services.task_emails import TaskEmail, build_task_email, html_to_plain_text, passed_in_look_back
+from src.services.task_utils import passed_task_number
 from src.services.text_sender import TextSender, TextSkipped
 
 
@@ -323,6 +325,86 @@ class ActionRunner:
         )
         return combined
 
+    def get_task_emails(
+        self, groups: List[Group], days: int, today: Optional[date] = None,
+    ) -> Dict[str, List[TaskEmail]]:
+        """For each course with task emails, by group ID: who passed a task in
+        the look-back days. Anyone whose follow-up note already has this
+        email's subject is left out, so a repeat run can't send it twice."""
+        students = self.student_provider.get_students()
+        found: Dict[str, List[TaskEmail]] = {}
+        for group in groups:
+            if not group.task_email_rows():
+                continue
+            found[group.id] = []
+            for student in students:
+                if not in_group_course(student, group.scoped_course_code):
+                    continue
+                if not passed_in_look_back(student, days, today):
+                    continue
+                task_email = build_task_email(student, group, self.template_repo.get_by_id)
+                if task_email is None:
+                    continue
+                if task_email.subject.lower() in student.course_followup_note.lower():
+                    self.activity_logger.log(
+                        f"[SKIPPED] {student.full_name} already has '{task_email.subject}' in their follow-up note"
+                    )
+                    continue
+                found[group.id].append(task_email)
+        return found
+
+    def run_task_emails(
+        self,
+        task_emails: Dict[str, List[TaskEmail]],
+        signature: str,
+        included_ids_by_group_id: Optional[Dict[str, Set[str]]] = None,
+        control: Optional[RunControl] = None,
+    ) -> ActionRunSummary:
+        """Sends what get_task_emails() found. Same rules as run(): the note
+        only follows a sent email, and one student's failure stops nobody
+        else. `included_ids_by_group_id` is the review window's selection."""
+        self.activity_logger.log("Starting task-email run")
+        to_run = []
+        for group_id, emails in task_emails.items():
+            included = included_ids_by_group_id.get(group_id) if included_ids_by_group_id else None
+            to_run.extend(
+                t for t in emails
+                if t.problem or included is None or t.student.salesforce_id in included
+            )
+        summary = ActionRunSummary()
+        if any(not t.problem for t in to_run):
+            self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
+        for position, task_email in enumerate(to_run, start=1):
+            student = task_email.student
+            if self._stopped(control, [t.student for t in to_run[position - 1:]], summary):
+                break
+            if control:
+                control.report(position, len(to_run), student.full_name)
+            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
+            if task_email.problem:
+                self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {task_email.problem}")
+                summary.results.append(
+                    StepResult(student=student, step_type="email", outcome="skipped", detail=task_email.problem)
+                )
+                continue
+            result = self._send_email(student, task_email.subject, task_email.body, signature)
+            summary.results.append(result)
+            if result.outcome == "success":
+                note_body = html_to_plain_text(render_merge_fields(task_email.body, student))
+                summary.results.append(self._attempt_note(
+                    student, task_email.subject, note_body, task_email.subject,
+                    course_code=task_email.group.scoped_course_code,
+                ))
+            else:
+                detail = "Email was not sent successfully"
+                self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                summary.results.append(StepResult(student=student, step_type="note", outcome="skipped", detail=detail))
+        self.activity_logger.log(
+            f"Task-email run complete — {summary.succeeded} succeeded, "
+            f"{summary.failed} failed, {summary.skipped} skipped"
+        )
+        return summary
+
     def run_batch(
         self,
         items: List[Tuple[Action, str]],
@@ -460,7 +542,7 @@ class ActionRunner:
         in this action's course. Skipped (with the reason, so it shows in the
         results) when there's nothing safe to send."""
         group = self.group_lookup(action.group_id) if self.group_lookup and action.group_id else None
-        task = student.latest_task_number
+        task = passed_task_number(student)
 
         def skip(detail: str) -> StepResult:
             self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {detail}")
@@ -468,13 +550,13 @@ class ActionRunner:
 
         if group is None or not group.is_course:
             return skip("This Action uses course task emails, but its group isn't a course (see Settings)")
-        if task is None:
+        if student.latest_task_number is None:
             return skip("No task submitted yet")
-        if not is_latest_task_passed(student):
+        if task is None:
             # Guard even if a filter was forgotten: never send "on to the next
             # task" to someone whose latest task came back for revisions.
             status = student.latest_task_status.strip() or "unknown"
-            return skip(f"Latest task (Task {task}) hasn't passed (status: {status})")
+            return skip(f"Latest task (Task {student.latest_task_number}) hasn't passed (status: {status})")
         email = group.task_email_for(task)
         if email is None:
             return skip(f"No task email set up for {group.course_code} Task {task} (see Settings)")

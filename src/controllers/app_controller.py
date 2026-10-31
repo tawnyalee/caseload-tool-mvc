@@ -1,11 +1,13 @@
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
 from src.models.group import Group
 from src.views.scenario_nav_panel import ScenarioNavPanel
 from src.views.add_action_view import AddActionView
+from src.services.app_settings_repository import AppSettingsRepository
 from src.services.group_repository import GroupRepository
+from src.services.task_emails import MAX_LOOK_BACK_DAYS, batches_for_review, parse_look_back_days
 from src.services.action_repository import ActionRepository
 from src.models.enums import InteractionType
 from src.services.template_repository import TemplateRepository
@@ -27,7 +29,7 @@ from src.services import salesforce_browser_session
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
 )
-from src.services.outlook_signature_provider import LocalOutlookSignatureProvider
+from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, LocalOutlookSignatureProvider
 from src.services.action_runner import ActionRunner, RunControl
 from src.services.background_worker import BackgroundWorker, UiDispatcher
 from src.views.dashboard_view import DashboardView
@@ -95,6 +97,7 @@ class AppController:
         self.action_repo = ActionRepository()
         self.template_repo = TemplateRepository()
         self.saved_batch_repo = SavedBatchRepository()
+        self.app_settings = AppSettingsRepository()
         # Before the logger opens today's file. Logs/screenshots can hold
         # student names, so nothing older than today is kept (see purge_old_logs).
         log_dir = self.LOG_DIR or app_paths.logs_dir()
@@ -431,6 +434,99 @@ class AppController:
         self.activity_logger.log("Dashboard opened")
         self.switch_workspace_view(DashboardView, controller=self)
 
+    @property
+    def default_signature(self) -> str:
+        return self.app_settings.default_signature
+
+    def handle_send_task_emails(self, days_text: str = "") -> None:
+        """Dashboard's Send Task Emails: each course's email for the task a
+        student just passed (task_emails.py). Blank days means yesterday.
+        Nothing sends until the professor confirms the review window."""
+        if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
+            return
+        days = parse_look_back_days(days_text)
+        if days is None:
+            messagebox.showwarning(
+                "Days to look back",
+                f"Enter a whole number of days from 1 to {MAX_LOOK_BACK_DAYS}, or leave it blank for yesterday.",
+            )
+            return
+        signature = self.default_signature
+        if signature not in self.signature_provider.get_signature_names():
+            messagebox.showwarning(
+                "Default signature needed",
+                "Task emails use your default signature. Choose one at the top of ⚙ Settings, then try again.",
+            )
+            return
+
+        task_emails = self.action_runner.get_task_emails(self.groups, days)
+        courses = [g for g in self.groups if g.id in task_emails]
+        if not courses:
+            messagebox.showinfo(
+                "Task Emails", "No courses are set up for task emails yet. Add task counts in ⚙ Settings."
+            )
+            return
+        # One section per distinct email, so each can be read before it goes out.
+        review_items = []
+        group_of_item = {}
+        for group in courses:
+            for batch in batches_for_review(task_emails[group.id]):
+                first = batch[0]
+                key = f"{group.id}:{len(review_items)}"
+                group_of_item[key] = group.id
+                review_items.append(MultiReviewItem(
+                    key=key,
+                    label=f"{group.name} — Passed Task {first.passed_task} — {first.subject} — {first.email_name}",
+                    students=[t.student for t in batch],
+                    student_details={t.student.salesforce_id: f"Task {t.passed_task}" for t in batch},
+                    preview=first.preview(),
+                ))
+        if not review_items:
+            problems = [
+                f"{t.student.full_name}: {t.problem}" for group in courses for t in task_emails[group.id]
+            ]
+            messagebox.showinfo(
+                "Task Emails",
+                "\n".join(["There are no task emails to send for these days."] + problems),
+            )
+            return
+
+        def _on_confirm(selections):
+            self._log_review_choice(
+                "Send Task Emails", sum(len(ids) for ids in selections.values()),
+                sum(len(item.students) for item in review_items),
+            )
+            selected_by_group = {group.id: set() for group in courses}
+            for key, ids in selections.items():
+                selected_by_group[group_of_item[key]] |= ids
+            self._run_in_background(
+                "Sending Task Emails",
+                lambda control: self.action_runner.run_task_emails(
+                    task_emails, signature, included_ids_by_group_id=selected_by_group, control=control,
+                ),
+                on_finished=_show_results,
+            )
+
+        def _show_results(summary):
+            message = (
+                f"Task emails complete:\n\n"
+                f"✅ Succeeded: {summary.succeeded}\n"
+                f"❌ Failed: {summary.failed}\n"
+                f"⏭ Skipped: {summary.skipped}\n\n"
+                f"Full details are in the Live Application Log."
+            )
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "Task Emails Sent",
+                "Task Emails — Review Needed", message, issue_lines(summary),
+            )
+
+        MultiReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title="Send Task Emails",
+            items=review_items,
+            on_confirm=_on_confirm,
+        )
+
     def handle_send_welcome_emails(self) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
@@ -613,12 +709,18 @@ class AppController:
             SettingsView,
             groups=[g for g in self.groups if g.name != "General"],
             on_save=self.handle_save_course_settings,
-            templates=[(t.id, t.name) for t in self.template_repo.load_all()],
+            load_templates=lambda: [(t.id, t.name) for t in self.template_repo.load_all()],
+            signature_names=self.signature_provider.get_signature_names(),
+            default_signature=self.default_signature,
+            on_save_signature=self.app_settings.save_default_signature,
+            save_template=self.save_template,
+            get_template=self.template_repo.get_by_id,
         )
 
-    def handle_save_course_settings(self, settings_by_group_id: Dict[str, dict]) -> None:
+    def handle_save_course_settings(self, settings_by_group_id: Dict[str, dict], problems: Sequence[str] = ()) -> None:
         """Applies the Settings screen's course settings (keyed by group ID,
-        never by name) and saves them."""
+        never by name) and saves them. `problems` lists the groups left out
+        because their settings aren't valid, and the popup names them."""
         for group in self.groups:
             settings = settings_by_group_id.get(group.id)
             if not settings:
@@ -630,6 +732,12 @@ class AppController:
             group.has_objective_assessment = settings["has_objective_assessment"]
             group.task_emails = settings.get("task_emails", group.task_emails)
         self.group_repo.save_groups(self.groups)
+        if problems:
+            self.activity_logger.log(f"Course settings saved, except: {' '.join(problems)}")
+            messagebox.showwarning(
+                "Settings", "These weren't saved:\n\n" + "\n".join(problems) + "\n\nEverything else was saved."
+            )
+            return
         self.activity_logger.log("Course settings saved")
         messagebox.showinfo("Settings", "Settings saved.")
 
@@ -973,6 +1081,16 @@ class AppController:
 
         if not action_name:
             messagebox.showwarning("Validation Error", "Action name cannot be empty.")
+            return False
+
+        # The dropdown's "nothing found" message isn't a signature. Saved as
+        # one, every email from this action would fail at send time.
+        if action_data.get("is_email") and action_data.get("email_signature") == NO_SIGNATURES_FOUND:
+            messagebox.showwarning(
+                "Validation Error",
+                "Choose your Outlook signature before saving. If the list has none, "
+                "set one up in Outlook (classic), then reopen this Action.",
+            )
             return False
 
         # 1. Manage Group Welcome Email Conflicts & Scenario Linking

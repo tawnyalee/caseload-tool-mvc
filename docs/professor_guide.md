@@ -53,8 +53,9 @@ A **group** is usually one course. Pick it from the **Scenario Groups** dropdown
 
 - **+ Add Group** creates one. Leave **This group is a course** checked and name it by its course code (for example **D424**).
 - **📝 Edit Group** renames it. Renaming never changes the course it's for.
-- **⚙ Settings → Courses** sets each group's details: whether it's a course, its **course code**, whether it **has tasks** and **how many**, and whether it **has an objective assessment** (a course can have tasks, an OA, or both). Click **💾 Save Settings** when done.
-- **Task emails** (in the same card, once a course has tasks): for each task, choose the template to send a student who **just passed** it, and its subject. There's no row for the last task of a tasks-only course (those students have finished), but a course that also has an OA gets a **Task N (OA prep)** row for the last task.
+- **⚙ Settings → Courses** sets each group's details: whether it's a course, its **course code**, whether it **has tasks** and **how many**, and whether it **has an objective assessment** (a course can have tasks, an OA, or both). Click **💾 Save Settings** when done. You can set up one course at a time: finished courses save even if another is incomplete, and a popup lists any that weren't saved and why.
+- **Default Outlook Signature** (top of **⚙ Settings**): optional. New Actions start with it, and you can still change it on any Action. **🎯 Send Task Emails** needs it.
+- **Task emails** (in the same card, once a course has tasks): each row is the task a student **just passed**, so **Passed Task 1** is your email about Task 2. Choose a saved email, or use **➕ New** and **✏️ Edit** to write one, the same as on an Action. Then click **💾 Save Settings**. There's no row for a course's last task, and OAs aren't included yet.
 - **❌ Delete** removes it **and all of its Actions** (you'll be asked to confirm).
 - **General** is always there and can't be renamed or deleted.
 
@@ -70,23 +71,22 @@ An **Action** is one kind of outreach, such as "Day 3 Follow Up". Click **+ Add 
 6. **Is Group Welcome Email** — check this on the one Action per group that **✉️ Send Welcome Emails** should run.
 7. Click **💾 Save Action**.
 
-### Recipe: email students who just passed a task
+### Task emails: email students who just passed a task
 
-Once a course's **task emails** are set up in **⚙ Settings → Courses**, one Action per course handles every task — each student gets the email for the task they just passed:
+You don't need an Action for this. Set up each course in **⚙ Settings**, choose a **Default Outlook Signature**, then click **🎯 Send Task Emails** on the Dashboard.
 
-1. Create an Action in the course's group (for example **D424**), check **Send Email**, then check **Use this course's task emails**.
-2. Add these filter rules:
-   - **latest_task_status** → **IsOneOf** → **Passed**
-   - **latest_task_date** → **WithinLastDays** → **3** (today and the 3 days before, so a Monday run catches Friday and the weekend)
-   - **course_followup_note** → **DoesNotContain** → **{{last_passed_task}} tips sent**
-3. In **Note Details**, set the **follow-up note** to **{{last_passed_task}} tips sent**. It fills in per student (for example "Task 3 tips sent"), so tomorrow's run skips anyone who already got that task's email — and includes them again once they pass the next task.
-4. Do the same for each course, save them as one **Saved Batch**, and run it each morning.
+- **Who it finds:** students who passed a task yesterday. After time off, enter a number in **Days to look back**: **3** on a Monday covers Friday through Sunday. Today's passes aren't included, so run it again tomorrow for those.
+- **Before anything sends:** the review window has one section per email, showing the task, subject, the email's text, and the students getting it. Uncheck anyone who shouldn't get it, or click **Select None** to hold back a whole email.
+- **What they get:** "Hello" and their first name (or preferred name), then your email for the task they passed. Write only the rest of the email in Settings.
+- **Subject:** **Task <next task> Support**, for example **Task 3 Support** after passing Task 2.
+- **In Salesforce:** a note with the same subject, holding the text of the email, and a follow-up note with the same words. That follow-up note is how the app knows the student already got this email, so running it twice won't send it twice.
+- **Already submitted the next task?** They get a short congratulations instead of your email.
 
-A task email only goes to a student whose latest task **passed**. Anyone who can't get one — no email set up for their task, or their latest task came back for revisions — is listed in the results with the reason.
+Anyone who can't get an email because none is set up for that task is listed in the results with the reason.
 
 ### Personalizing emails
 
-Use **Insert Field** while writing an email subject or body to add details that fill in for each student. You can also type them (with the double braces, e.g. **{{last_passed_task}}**) into task-email subjects in Settings and into **Note Details** — the note subject, body, and follow-up note:
+Use **Insert Field** while writing an email subject or body to add details that fill in for each student. You can also type them (with the double braces, e.g. **{{last_passed_task}}**) into **Note Details** — the note subject, body, and follow-up note:
 
 - **Student Name** — `{{student_name}}`
 - **Course Code** — `{{course_code}}`
@@ -96,10 +96,11 @@ Use **Insert Field** while writing an email subject or body to add details that 
 
 ## Sending
 
-There are four ways to send. Every one shows you exactly who will be contacted first, and **nothing goes out until you click Send or Run**.
+There are five ways to send. Every one shows you exactly who will be contacted first, and **nothing goes out until you click Send or Run**.
 
 - **Run** (next to an Action) — sends that Action.
 - **✉️ Send Welcome Emails** (Dashboard) — runs each group's welcome Action.
+- **🎯 Send Task Emails** (Dashboard) — emails students who just passed a task, using your course settings.
 - **🗂️ Run Action Batch** (Dashboard) — runs several Actions in an order you choose. **💾 Save Batch** keeps a combination you use often; pick it later from **Saved Batches**.
 - **📤 Send Email to All Students** (Dashboard) — a one-off email, such as a class cancellation, with an optional note.
 
@@ -184,7 +185,7 @@ Click **↻ Refresh Caseload** and log in.
 Click **↻ Refresh Caseload** and log in again.
 
 **"Outlook signature '…' wasn't found…"**
-Edit the Action and pick a signature from the list — the one it had may have been renamed or removed in Outlook.
+Edit the Action and pick a signature from the list — the one it had may have been renamed or removed in Outlook. Save Action won't accept "No Outlook signatures found": choose a real signature, or set one up in Outlook first.
 
 **"Microsoft Edge couldn't be started…"**
 Make sure Microsoft Edge is installed and up to date.

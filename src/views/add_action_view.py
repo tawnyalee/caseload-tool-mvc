@@ -56,6 +56,8 @@ class AddActionView(ctk.CTkFrame):
         # Populate fields if editing an existing action
         if self.action_data:
             self.populate_fields(self.action_data)
+        else:
+            self._select_default_signature()
 
         # Pack save controls frame at bottom
         self.controls_frame.pack(side="bottom", fill="x", padx=15, pady=(15, 30))
@@ -412,8 +414,7 @@ class AddActionView(ctk.CTkFrame):
         field_name = condition.get("field")
         if not field_name or field_name not in FILTERABLE_FIELDS:
             return
-        row.field_dropdown.set(field_name)
-        row._on_field_changed(field_name)
+        row.select_field(field_name)
 
         operator = condition.get("operator")
         valid_operators = [op.value for op in FILTERABLE_FIELDS[field_name].operators]
@@ -735,6 +736,12 @@ class AddActionView(ctk.CTkFrame):
             width=220
         )
         self.email_signature_dropdown.pack(anchor="w", padx=10, pady=(2, 10))
+
+    def _select_default_signature(self):
+        """A new action starts on the default from Settings, if there is one."""
+        default = getattr(self.controller, "default_signature", "")
+        if isinstance(default, str) and default in self.email_signature_dropdown.cget("values"):
+            self.email_signature_dropdown.set(default)
 
     def _update_task_email_state(self):
         """With course task emails on, the single subject/template aren't used

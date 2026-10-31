@@ -1,0 +1,227 @@
+from datetime import date
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.models.group import Group
+from src.models.student import Student
+from src.models.email_template import EmailTemplate
+from src.services.action_runner import ActionRunner, RunControl
+from src.services.app_settings_repository import AppSettingsRepository
+from src.services.email_sender import FakeEmailSender
+from src.services.note_writer import FakeNoteWriter
+from src.services.task_emails import (
+    batches_for_review, build_task_email, html_to_plain_text, parse_look_back_days, passed_in_look_back,
+)
+from src.services.task_utils import passed_task_number
+from src.services.text_sender import FakeTextSender
+
+MONDAY = date(2026, 11, 2)
+
+
+def _student(sid="S1", **fields):
+    defaults = dict(
+        salesforce_id=sid, first_name="Jane", last_name="Doe", email=f"{sid}@example.test",
+        course_code="D424", latest_task_status="Passed", latest_task_date="11/1/2026",
+        task_1="2026-10-20 (1)", task_2="2026-11-01 (1)", latest_task_number=2,
+    )
+    return Student(**{**defaults, **fields})
+
+
+def _course(**fields):
+    defaults = dict(
+        name="D424", group_id="G1", is_course=True, course_code="D424", has_tasks=True, task_count=4,
+        task_emails={"2": {"template_id": "T3"}},
+    )
+    return Group(**{**defaults, **fields})
+
+
+def _template(template_id):
+    if template_id != "T3":
+        return None
+    return EmailTemplate(name="Task 3 email", body="<p>Here are the Task 3 tips.</p>", template_id="T3")
+
+
+def _runner(students):
+    provider = MagicMock()
+    provider.get_students.return_value = students
+    templates = MagicMock()
+    templates.get_by_id.side_effect = _template
+    runner = ActionRunner(provider, FakeEmailSender(), FakeTextSender(), FakeNoteWriter(), templates, MagicMock())
+    return runner
+
+
+# --- Which task passed -------------------------------------------------------
+
+def test_a_later_submitted_task_doesnt_count_as_the_passed_one():
+    # The real case: passed Task 2 (dated like LatestTaskDate), Task 3 submitted.
+    student = _student(task_3="2026-10-25 (0)")
+    assert passed_task_number(student) == 2
+
+
+def test_when_two_tasks_share_the_date_the_evaluated_one_wins():
+    assert passed_task_number(_student(task_3="2026-11-01 (0)")) == 2
+
+
+def test_no_date_match_falls_back_to_the_latest_task_number():
+    assert passed_task_number(_student(latest_task_date="", latest_task_number=2)) == 2
+
+
+def test_nothing_counts_as_passed_unless_the_status_is_passed():
+    assert passed_task_number(_student(latest_task_status="Revisions Needed")) is None
+
+
+# --- Look-back days ----------------------------------------------------------
+
+@pytest.mark.parametrize("text, days", [("", 1), ("  ", 1), ("3", 3), (" 14 ", 14), ("365", 365)])
+def test_valid_look_back_days(text, days):
+    assert parse_look_back_days(text) == days
+
+
+@pytest.mark.parametrize("text", ["0", "-1", "2.5", "abc", "3 days", "366", "٣"])
+def test_invalid_look_back_days(text):
+    assert parse_look_back_days(text) is None
+
+
+def test_default_is_yesterday_only():
+    assert passed_in_look_back(_student(latest_task_date="11/1/2026"), 1, MONDAY)
+    assert not passed_in_look_back(_student(latest_task_date="10/31/2026", task_2="2026-10-31 (1)"), 1, MONDAY)
+
+
+@pytest.mark.parametrize("passed_on, included", [
+    ("11/2/2026", False),  # today
+    ("11/1/2026", True),  # Sunday
+    ("10/30/2026", True),  # Friday
+    ("10/29/2026", False),  # Thursday
+])
+def test_three_on_a_monday_is_friday_through_sunday(passed_on, included):
+    assert passed_in_look_back(_student(latest_task_date=passed_on), 3, MONDAY) is included
+
+
+# --- The email ---------------------------------------------------------------
+
+def test_email_has_the_next_tasks_subject_and_a_greeting_above_the_saved_text():
+    email = build_task_email(_student(), _course(), _template)
+    assert email.subject == "Task 3 Support"
+    assert email.body == "<p>Hello Jane,</p><p>Here are the Task 3 tips.</p>"
+
+
+def test_next_task_already_submitted_gets_the_congratulations_instead():
+    email = build_task_email(_student(task_3="2026-10-25 (0)"), _course(task_emails={}), _template)
+    assert email.problem == ""
+    assert "Hi Jane, congrats on passing Task 2. I see you submitted the next task." in email.body
+    assert "Here are the Task 3 tips" not in email.body
+
+
+def test_no_email_set_up_is_a_listed_problem():
+    assert "No task email set up for D424 Task 2" in build_task_email(_student(), _course(task_emails={}), _template).problem
+
+
+def test_deleted_template_is_a_listed_problem():
+    group = _course(task_emails={"2": {"template_id": "gone"}})
+    assert "no longer exists" in build_task_email(_student(), group, _template).problem
+
+
+def test_passing_the_last_task_has_nothing_next():
+    assert build_task_email(_student(), _course(task_count=2), _template) is None
+
+
+def test_review_batches_split_by_task_and_wording_and_leave_out_problems():
+    group = _course()
+    same_a = build_task_email(_student("S1"), group, _template)
+    same_b = build_task_email(_student("S2"), group, _template)
+    congrats = build_task_email(_student("S3", task_3="2026-10-25 (0)"), group, _template)
+    stuck = build_task_email(_student("S4"), _course(task_emails={}), _template)
+
+    batches = batches_for_review([same_a, congrats, same_b, stuck])
+
+    assert [[t.student.salesforce_id for t in batch] for batch in batches] == [["S3"], ["S1", "S2"]]
+    assert same_a.email_name == "Task 3 email"
+    assert same_a.preview() == "Hello Jane,\n\nHere are the Task 3 tips."
+
+
+def test_html_becomes_readable_note_text():
+    assert html_to_plain_text("<p>Hello Jane,</p><p>Tips &amp; tricks<br>Line two</p>") == (
+        "Hello Jane,\n\nTips & tricks\nLine two"
+    )
+
+
+# --- The run -----------------------------------------------------------------
+
+def test_a_sent_email_writes_its_text_as_the_note_and_the_same_subject_everywhere():
+    runner = _runner([_student()])
+    emails = runner.get_task_emails([_course()], 1, MONDAY)
+
+    summary = runner.run_task_emails(emails, "My Signature")
+
+    assert summary.failed == 0 and summary.skipped == 0
+    sent = runner.email_sender.sent[0]
+    assert sent["subject"] == "Task 3 Support" and sent["signature"] == "My Signature"
+    assert runner.note_writer.written[0]["subject"] == "Task 3 Support"
+    assert runner.note_writer.written[0]["body"] == "Hello Jane,\n\nHere are the Task 3 tips."
+    assert runner.note_writer.written[0]["course_code"] == "D424"
+    assert runner.note_writer.follow_up_notes["S1"] == "Task 3 Support"
+
+
+def test_only_students_in_the_course_and_the_days_are_found():
+    runner = _runner([
+        _student("S1"), _student("S2", course_code="C769"),
+        _student("S3", latest_task_date="10/1/2026", task_2="2026-10-01 (1)"),
+        _student("S4", latest_task_status="Task Submitted"),
+    ])
+    emails = runner.get_task_emails([_course()], 1, MONDAY)
+    assert [t.student.salesforce_id for t in emails["G1"]] == ["S1"]
+
+
+def test_a_student_who_already_has_the_follow_up_note_isnt_sent_it_again():
+    runner = _runner([_student(course_followup_note="task 3 support")])
+    assert runner.get_task_emails([_course()], 1, MONDAY)["G1"] == []
+
+
+def test_an_older_follow_up_note_doesnt_stop_the_next_email():
+    runner = _runner([_student(course_followup_note="Task 2 Support")])
+    assert len(runner.get_task_emails([_course()], 1, MONDAY)["G1"]) == 1
+
+
+def test_unchecked_students_arent_sent_and_problems_are_listed_as_skipped():
+    runner = _runner([_student("S1"), _student("S2"), _student("S3", latest_task_date="11/1/2026", task_2="", task_1="2026-11-01 (1)")])
+    emails = runner.get_task_emails([_course()], 1, MONDAY)
+
+    summary = runner.run_task_emails(emails, "Sig", included_ids_by_group_id={"G1": {"S1"}})
+
+    assert [e["to"] for e in runner.email_sender.sent] == ["S1@example.test"]
+    assert [r.student.salesforce_id for r in summary.skipped_steps] == ["S3"]
+
+
+def test_failed_email_skips_the_note():
+    runner = _runner([_student()])
+    runner.email_sender = FakeEmailSender(fail_for={"S1@example.test"})
+
+    summary = runner.run_task_emails(runner.get_task_emails([_course()], 1, MONDAY), "Sig")
+
+    assert summary.failed == 1 and summary.skipped == 1
+    assert runner.note_writer.written == []
+
+
+def test_stop_leaves_the_rest_not_started():
+    runner = _runner([_student("S1"), _student("S2")])
+    control = RunControl()
+    control.request_stop()
+
+    summary = runner.run_task_emails(runner.get_task_emails([_course()], 1, MONDAY), "Sig", control=control)
+
+    assert runner.email_sender.sent == []
+    assert [r.step_type for r in summary.results] == ["stopped", "stopped"]
+
+
+def test_oa_courses_have_no_row_after_the_last_task_for_now():
+    assert _course(task_count=3, has_objective_assessment=True).task_email_rows() == [1, 2]
+
+
+# --- Default signature -------------------------------------------------------
+
+def test_default_signature_is_blank_until_saved_and_survives_reloading(tmp_path):
+    path = tmp_path / "app_settings.json"
+    assert AppSettingsRepository(path).default_signature == ""
+    AppSettingsRepository(path).save_default_signature("My Signature")
+    assert AppSettingsRepository(path).default_signature == "My Signature"

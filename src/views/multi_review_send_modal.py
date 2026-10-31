@@ -14,7 +14,7 @@ to ActionRunner.run_batch()'s included_ids_by_index or
 run_welcome_emails()'s included_ids_by_group_id.
 """
 import tkinter.messagebox as messagebox
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 import customtkinter as ctk
@@ -27,6 +27,8 @@ class ReviewItem:
     key: str  # batch: str(index); welcome emails: group.id
     label: str  # e.g. "D424 — Welcome Action"
     students: List[Student]
+    student_details: Dict[str, str] = field(default_factory=dict)  # by student ID, e.g. "Task 1"
+    preview: str = ""  # the email these students get, read-only
 
 
 class MultiReviewSendModal(ctk.CTkToplevel):
@@ -48,7 +50,7 @@ class MultiReviewSendModal(ctk.CTkToplevel):
         self._check_vars: Dict[str, Dict[str, ctk.StringVar]] = {}
 
         target_height = min(650, self.winfo_screenheight() - 120)
-        self.geometry(f"620x{target_height}")
+        self.geometry(f"640x{target_height}")
         self.minsize(420, 320)
 
         total_students = sum(len(item.students) for item in items)
@@ -88,6 +90,15 @@ class MultiReviewSendModal(ctk.CTkToplevel):
             font=ctk.CTkFont(weight="bold"),
         ).pack(side="left")
 
+        if item.preview:
+            ctk.CTkLabel(section, text="Email (shown for the first student):", text_color=("gray35", "gray65")).pack(
+                anchor="w", padx=10
+            )
+            preview_box = ctk.CTkTextbox(section, height=130, wrap="word")
+            preview_box.insert("1.0", item.preview)
+            preview_box.configure(state="disabled")
+            preview_box.pack(fill="x", padx=10, pady=(0, 6))
+
         if not item.students:
             self._check_vars[item.key] = {}
             return
@@ -105,8 +116,9 @@ class MultiReviewSendModal(ctk.CTkToplevel):
         for student in item.students:
             var = ctk.StringVar(value="on")
             self._check_vars[item.key][student.salesforce_id] = var
+            detail = item.student_details.get(student.salesforce_id)
             ctk.CTkCheckBox(
-                section, text=f"{student.full_name}  (ID: {student.salesforce_id})",
+                section, text=f"{student.full_name}  (ID: {student.salesforce_id})" + (f"  {detail}" if detail else ""),
                 variable=var, onvalue="on", offvalue="off",
             ).pack(anchor="w", padx=20, pady=2)
 

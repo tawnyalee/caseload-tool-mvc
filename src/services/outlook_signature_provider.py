@@ -15,6 +15,9 @@ from typing import List, Optional
 SIGNATURE_FILE_EXTENSIONS = (".htm", ".rtf", ".txt")
 
 
+NO_SIGNATURES_FOUND = "No Outlook signatures found"
+
+
 class OutlookSignatureProvider(ABC):
     @abstractmethod
     def get_signature_names(self) -> List[str]:
@@ -58,7 +61,7 @@ class FakeOutlookSignatureProvider(OutlookSignatureProvider):
 
 def get_signature_names_or_fallback(
     provider: Optional[OutlookSignatureProvider],
-    fallback: str = "No Outlook signatures found",
+    fallback: str = NO_SIGNATURES_FOUND,
 ) -> List[str]:
     """Shared by every place that needs signature names for a dropdown:
     falls back to a single explanatory option instead of an empty/missing

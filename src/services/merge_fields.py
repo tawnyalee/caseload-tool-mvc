@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict
 
 from src.models.student import Student
-from src.services.task_utils import MAX_TASK_NUMBER, is_latest_task_passed
+from src.services.task_utils import MAX_TASK_NUMBER, passed_task_number
 
 
 @dataclass
@@ -33,9 +33,8 @@ def _last_passed_task(student: Student) -> str:
     task_utils's module docstring), only the status of whichever task is
     latest. Blank rather than a guess in every other case (currently in
     revisions, pending evaluation, or nothing submitted)."""
-    if student.latest_task_number is not None and is_latest_task_passed(student):
-        return f"Task {student.latest_task_number}"
-    return ""
+    passed = passed_task_number(student)
+    return f"Task {passed}" if passed is not None else ""
 
 
 def _next_task(student: Student) -> str:

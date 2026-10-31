@@ -30,10 +30,10 @@ def test_tasks_only_course_has_no_row_for_the_last_task():
     assert group.task_email_rows() == [1, 2, 3, 4]
 
 
-def test_course_with_tasks_and_an_oa_gets_a_row_after_the_last_task_for_oa_prep():
+def test_an_oa_adds_no_row_after_the_last_task_for_now():
     group = Group(name="C769", is_course=True, course_code="C769", has_tasks=True, task_count=5,
                   has_objective_assessment=True)
-    assert group.task_email_rows() == [1, 2, 3, 4, 5]
+    assert group.task_email_rows() == [1, 2, 3, 4]
 
 
 def test_no_rows_unless_a_course_with_tasks():

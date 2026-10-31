@@ -5,6 +5,8 @@ from src.services.filterable_fields import (
     FILTERABLE_FIELDS,
     FieldKind,
     Operator,
+    field_label,
+    field_label_sort_key,
     MOMENTUM_VALUES,
     STUDENT_STATUS_VALUES,
     TASK_STATUS_VALUES,
@@ -83,3 +85,10 @@ def test_date_fields_include_the_full_retroactive_operator_set():
         Operator.WITHIN_NEXT_DAYS, Operator.IS_EMPTY, Operator.IS_NOT_EMPTY,
     ):
         assert expected in ops
+
+
+def test_every_field_has_its_own_label_and_task_numbers_sort_by_value():
+    labels = [field_label(name) for name in FILTERABLE_FIELDS]
+    assert len(set(labels)) == len(labels)
+    assert field_label("course_followup_note") == "Follow-up Note"
+    assert sorted(["Task 10", "Task 2", "Task 1"], key=field_label_sort_key) == ["Task 1", "Task 2", "Task 10"]
