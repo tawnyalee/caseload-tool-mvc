@@ -124,6 +124,25 @@ def _row_for_student(page: Page, salesforce_id: str, max_scroll_attempts: int = 
     raise RuntimeError(f'Could not find a row for student "{salesforce_id}" after scrolling through the roster.')
 
 
+def _choose_single_interaction(page: Page, attempts: int = 6, checks: int = 80) -> None:
+    """"Single Interaction" is a real radio button (not just clickable text)
+    that unlocks the Interaction Type dropdown once selected. Salesforce can
+    be slow to select the radio and slow again to fill the dropdown, by hand
+    too (developer, 2026-11-01), and 30 seconds wasn't enough in a live run.
+    So this waits up to 2 minutes, clicking again every 20 seconds in case a
+    click landed too early. Only a visible radio: a hidden match can come
+    first on the page."""
+    radio = page.locator(".slds-radio__label > .slds-radio_faux").locator("visible=true").first
+    interaction_type = page.get_by_label("*Interaction Type")
+    for _ in range(attempts):
+        radio.click()
+        for _ in range(checks):
+            page.wait_for_timeout(250)
+            if interaction_type.count() > 0 and interaction_type.is_enabled():
+                return
+    raise RuntimeError("The Interaction Type box stayed locked after choosing Single Interaction.")
+
+
 def write_note_fn(page: Page, salesforce_id: str, subject: str, body: str, course_code: str) -> None:
     try:
         # This icon is one of a fixed set (email/call/program/note) always in
@@ -131,9 +150,7 @@ def write_note_fn(page: Page, salesforce_id: str, subject: str, body: str, cours
         # name or other columns that can reorder - far more reliable to target.
         _row_for_student(page, salesforce_id).get_by_title("Open Student Notes for Selected Student").click()
 
-        # "Single Interaction" is a real radio button (not just clickable text)
-        # that reveals the Interaction Type dropdown once selected.
-        page.locator(".slds-radio__label > .slds-radio_faux").first.click()
+        _choose_single_interaction(page)
         page.get_by_label("*Interaction Type").select_option("Email to Student")
 
         # The course typeahead only searches on real keystrokes - .fill() sets

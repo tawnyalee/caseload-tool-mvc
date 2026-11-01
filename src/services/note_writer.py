@@ -19,6 +19,11 @@ from src.services.salesforce_browser_session import (
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
+# How long any one click, field or page load may take, up from Playwright's
+# 30 seconds: Salesforce can be very slow, and a note must not fail for that
+# (developer, 2026-11-01).
+NOTE_STEP_TIMEOUT_MS = 2 * 60 * 1000
+
 
 class NoteWriter(ABC):
     @abstractmethod
@@ -166,6 +171,7 @@ class PlaywrightNoteWriter(NoteWriter):
         if self._page is None:
             self._playwright = acquire_playwright()
             self._context = open_authenticated_context(self._playwright, headless=self.headless)
+            self._context.set_default_timeout(NOTE_STEP_TIMEOUT_MS)
             self._page = self._context.new_page()
             self._go_to(url)
         self._page_student = salesforce_id
@@ -198,6 +204,7 @@ class PlaywrightNoteWriter(NoteWriter):
 
         with playwright_session() as playwright:
             context = open_authenticated_context(playwright, headless=self.headless)
+            context.set_default_timeout(NOTE_STEP_TIMEOUT_MS)
             try:
                 page = context.new_page()
                 url = self.student_record_url_template.format(salesforce_id=salesforce_id)

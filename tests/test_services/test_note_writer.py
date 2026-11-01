@@ -141,6 +141,17 @@ def test_a_run_shares_one_browser_and_page_across_students(monkeypatch):
     assert writer.write_note_fn.call_count == 3 and writer.update_follow_up_fn.call_count == 3
 
 
+def test_slow_salesforce_steps_get_two_minutes_not_the_usual_thirty_seconds(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    writer.write_note("S1", "Subject", "Body", "D424")
+    writer.finish_run()
+
+    opened[0].set_default_timeout.assert_called_once_with(120_000)
+
+
 def test_each_new_student_gets_a_freshly_loaded_page(monkeypatch):
     """The live failure: on a reused page, every second note timed out."""
     opened = []

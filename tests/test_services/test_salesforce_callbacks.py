@@ -75,3 +75,31 @@ def test_update_follow_up_fn_wraps_failure_with_screenshot_path_and_student_id(t
     assert "SF2" in message
     assert "Screenshot:" in message
     assert "simulated: element not found" in message
+
+
+def _note_form(enabled_after_checks):
+    from unittest.mock import MagicMock
+
+    page = MagicMock()
+    interaction_type = page.get_by_label.return_value
+    interaction_type.count.return_value = 1
+    interaction_type.is_enabled.side_effect = enabled_after_checks
+    radio = page.locator.return_value.locator.return_value.first
+    return page, radio
+
+
+def test_single_interaction_is_clicked_again_when_the_box_stays_locked():
+    page, radio = _note_form([False, False, False, True])
+
+    salesforce_callbacks._choose_single_interaction(page, attempts=4, checks=2)
+
+    assert radio.click.call_count == 2
+
+
+def test_a_box_that_never_unlocks_fails_with_a_plain_message():
+    page, radio = _note_form([False] * 4)
+
+    with pytest.raises(RuntimeError, match="stayed locked"):
+        salesforce_callbacks._choose_single_interaction(page, attempts=2, checks=2)
+
+    assert radio.click.call_count == 2
