@@ -115,6 +115,7 @@ class PlaywrightNoteWriter(NoteWriter):
         self._context = None
         self._page = None
         self._reload_before_next_note = False
+        self._page_student = None
 
     def start_run(self) -> None:
         """Every note and follow-up shares one hidden browser for the whole
@@ -123,7 +124,12 @@ class PlaywrightNoteWriter(NoteWriter):
         was most of a run's time (developer, 2026-10-31). Opened on the first
         note, on the background thread, which must also close it: Playwright's
         sync API stays on one thread. A page left sitting between runs may
-        have timed out, so each run's first note reloads it once."""
+        have timed out, so each run's first note reloads it once.
+
+        Each new student also gets a freshly loaded page. Reusing it failed
+        about every second note in a live run (2026-10-31): the previous
+        student's note form was likely still there, hidden, and the clicks
+        landed on it. One student's note and follow-up do share a page."""
         self._in_run = True
         self._reload_before_next_note = self._page is not None
 
@@ -144,11 +150,12 @@ class PlaywrightNoteWriter(NoteWriter):
                 release_playwright()
             except Exception:
                 pass
-        self._playwright = self._context = self._page = None
+        self._playwright = self._context = self._page = self._page_student = None
 
     def _open_shared_page(self, salesforce_id: str) -> "Page":
         url = self.student_record_url_template.format(salesforce_id=salesforce_id)
-        if self._page is not None and self._reload_before_next_note:
+        new_student = salesforce_id != self._page_student
+        if self._page is not None and (self._reload_before_next_note or new_student):
             self._reload_before_next_note = False
             try:
                 self._go_to(url)
@@ -161,6 +168,7 @@ class PlaywrightNoteWriter(NoteWriter):
             self._context = open_authenticated_context(self._playwright, headless=self.headless)
             self._page = self._context.new_page()
             self._go_to(url)
+        self._page_student = salesforce_id
         return self._page
 
     def _go_to(self, url: str) -> None:

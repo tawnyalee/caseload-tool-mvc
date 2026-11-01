@@ -213,17 +213,9 @@ class AddActionView(ctk.CTkFrame):
         )
         self._note_header = note_header
 
+        # Not shown: every note is "Email to Student" (write_note_fn). Kept so
+        # a saved action's value passes through unchanged.
         self.interaction_type_var = ctk.StringVar(value="Email")
-        interaction_lbl = ctk.CTkLabel(self.note_container, text="Interaction Type:")
-        interaction_lbl.pack(anchor="w", padx=10, pady=(2, 0))
-
-        self.interaction_menu = ctk.CTkOptionMenu(
-            self.note_container,
-            values=["Email", "Text", "Email & Text"],
-            variable=self.interaction_type_var,
-            width=220
-        )
-        self.interaction_menu.pack(anchor="w", padx=10, pady=(2, 5))
 
         lbl = ctk.CTkLabel(self.note_container, text="Enter Subject Line for Note:")
         lbl.pack(anchor="w", padx=10, pady=(10, 5))
@@ -572,7 +564,7 @@ class AddActionView(ctk.CTkFrame):
 
     def _set_note_fields_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
-        for widget in (self.interaction_menu, self.note_subject, self.note_body, self.followup_note):
+        for widget in (self.note_subject, self.note_body, self.followup_note):
             widget.configure(state=state)
 
     def _toggle_text_section(self):

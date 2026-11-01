@@ -137,9 +137,34 @@ def test_a_run_shares_one_browser_and_page_across_students(monkeypatch):
     writer.finish_run()
 
     assert len(opened) == 1
-    opened[0].new_page.return_value.goto.assert_called_once()
     opened[0].browser.close.assert_not_called()
     assert writer.write_note_fn.call_count == 3 and writer.update_follow_up_fn.call_count == 3
+
+
+def test_each_new_student_gets_a_freshly_loaded_page(monkeypatch):
+    """The live failure: on a reused page, every second note timed out."""
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    for student_id in ("S1", "S2", "S3"):
+        writer.write_note(student_id, "Subject", "Body", "D424")
+        writer.update_follow_up_note(student_id, "Task 2 Support")
+    writer.finish_run()
+
+    assert opened[0].new_page.return_value.goto.call_count == 3
+
+
+def test_a_follow_up_with_no_note_also_gets_a_fresh_page_for_a_new_student(monkeypatch):
+    opened = []
+    writer = _shared_writer(monkeypatch, opened)
+
+    writer.start_run()
+    writer.update_follow_up_note("S1", "Task 2 Support")
+    writer.update_follow_up_note("S2", "Task 2 Support")
+    writer.finish_run()
+
+    assert opened[0].new_page.return_value.goto.call_count == 2
 
 
 def test_the_browser_stays_open_between_runs_and_each_run_reloads_once(monkeypatch):
@@ -220,3 +245,89 @@ def _no_connection_left_for_other_tests():
 
     yield
     browser_launch._this_thread.users = 0
+
+
+def _recording_writer(record_page_url, calls):
+    return PlaywrightNoteWriter(
+        student_record_url_template=record_page_url,
+        write_note_fn=lambda page, sid, subject, body, course_code: calls.append(("note", sid)),
+        update_follow_up_fn=lambda page, sid, text: calls.append(("follow-up", sid)),
+        headless=True,
+    )
+
+
+def test_nothing_from_one_student_is_left_on_the_page_for_the_next(saved_session, record_page_url):
+    """With real Edge: anything one student's note leaves on the page is gone
+    for the next student, but still there for that student's follow-up."""
+    seen = []
+
+    def leave_a_form_behind(page, sid, subject, body, course_code):
+        seen.append(("note", sid, page.evaluate("window.leftover || null")))
+        page.evaluate(f"window.leftover = '{sid}'")
+
+    def look_for_the_form(page, sid, text):
+        seen.append(("follow-up", sid, page.evaluate("window.leftover || null")))
+
+    writer = PlaywrightNoteWriter(
+        student_record_url_template=record_page_url,
+        write_note_fn=leave_a_form_behind, update_follow_up_fn=look_for_the_form, headless=True,
+    )
+    try:
+        writer.start_run()
+        for student_id in ("S1", "S2"):
+            writer.write_note(student_id, "Subject", "Body", "D424")
+            writer.update_follow_up_note(student_id, "Welcome Email")
+        writer.finish_run()
+    finally:
+        writer.close()
+
+    assert seen == [
+        ("note", "S1", None), ("follow-up", "S1", "S1"),
+        ("note", "S2", None), ("follow-up", "S2", "S2"),
+    ]
+
+
+def test_notes_really_save_while_another_browser_holds_the_connection(saved_session, record_page_url):
+    """The live failure, with real Edge: Mongoose holds Playwright for a whole
+    email-and-text run while each student's note is written on the same thread."""
+    from src.services.browser_launch import acquire_playwright, launch_browser, release_playwright
+
+    calls = []
+    writer = _recording_writer(record_page_url, calls)
+    mongoose_stand_in = launch_browser(acquire_playwright(), headless=True)
+    try:
+        writer.start_run()
+        for student_id in ("S1", "S2"):
+            writer.write_note(student_id, "Subject", "Body", "D424")
+            writer.update_follow_up_note(student_id, "Welcome Email")
+        writer.finish_run()
+    finally:
+        writer.close()
+        mongoose_stand_in.close()
+        release_playwright()
+
+    assert calls == [("note", "S1"), ("follow-up", "S1"), ("note", "S2"), ("follow-up", "S2")]
+
+
+def test_mongoose_can_start_while_the_notes_browser_stays_open(saved_session, record_page_url):
+    """The other order: notes from an earlier run are still open when a text
+    run starts, and later notes still work."""
+    from src.services.browser_launch import acquire_playwright, launch_browser, release_playwright
+
+    calls = []
+    writer = _recording_writer(record_page_url, calls)
+    try:
+        writer.start_run()
+        writer.write_note("S1", "Subject", "Body", "D424")
+        writer.finish_run()
+
+        mongoose_stand_in = launch_browser(acquire_playwright(), headless=True)
+        writer.start_run()
+        writer.update_follow_up_note("S1", "Welcome Email")
+        writer.finish_run()
+        mongoose_stand_in.close()
+        release_playwright()
+    finally:
+        writer.close()
+
+    assert calls == [("note", "S1"), ("follow-up", "S1")]

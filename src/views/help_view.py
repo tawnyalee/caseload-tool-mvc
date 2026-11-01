@@ -15,7 +15,9 @@ from pathlib import Path
 import customtkinter as ctk
 
 from src.services import app_paths
+from src.services.diagnostics import open_screenshots_folder
 from src.services.guide_markdown import inline_segments, parse_blocks, to_html_document
+from src.views.run_summary_modal import open_diagnostics_or_explain
 
 GUIDE_FILE = "docs/professor_guide.md"
 HANDOUT_NAME = "Professor Guide.html"
@@ -54,6 +56,22 @@ class HelpView(ctk.CTkFrame):
             header, text="🖨 Open printable version", width=190, command=self.open_printable,
         )
         self.print_button.pack(side="right")
+
+        # Packed side="bottom" before the guide, so it can never push these
+        # out of view (same lesson as ReviewSendModal).
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        self.diagnostics_button = ctk.CTkButton(
+            footer, text="🛠 Open Diagnostics Log", width=190, command=open_diagnostics_or_explain,
+        )
+        self.diagnostics_button.pack(side="left")
+        self.screenshots_button = ctk.CTkButton(
+            footer, text="🖼 Open Screenshots Folder", width=190, command=open_screenshots_folder,
+        )
+        self.screenshots_button.pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(
+            footer, text="Screenshots can show student information. Don't email them.", anchor="w",
+        ).pack(side="left", padx=(12, 0))
 
         self.textbox = ctk.CTkTextbox(self, wrap="word")
         self.textbox.pack(fill="both", expand=True, padx=10, pady=(0, 10))

@@ -152,6 +152,9 @@ def write_note_fn(page: Page, salesforce_id: str, subject: str, body: str, cours
 
         page.get_by_text("Submit", exact=True).click()
         page.get_by_role("tab", name="Caseload").click()
+        # Same as the follow-up save below: the next step may reload the page,
+        # which could cut off a save still on its way.
+        page.wait_for_timeout(1500)
     except Exception as e:
         path = _screenshot_failure(page, f"write_note_{salesforce_id}")
         raise RuntimeError(

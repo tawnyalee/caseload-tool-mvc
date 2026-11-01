@@ -103,7 +103,7 @@ Use **Insert Field** while writing an email subject or body to add details that 
 There are five ways to send. Every one shows you exactly who will be contacted first, and **nothing goes out until you click Send or Run**.
 
 - **Run** (next to an Action) — sends that Action.
-- **✉️ Send Welcome Emails** (Dashboard) — runs each group's welcome Action.
+- **✉️ Send Welcome Emails** (Dashboard) — runs each group's welcome Action. The review window shows each course's message before anything sends.
 - **🎯 Send Task Emails** (Dashboard) — emails students who just passed a task, using your course settings.
 - **🗂️ Run Action Batch** (Dashboard) — runs several Actions in an order you choose. **💾 Save Batch** keeps a combination you use often; pick it later from **Saved Batches**.
 - **📤 Send Email to All Students** (Dashboard) — a one-off email, such as a class cancellation, with an optional note.
@@ -135,14 +135,15 @@ The day's log is a backup if you close that window by accident (see "Your data a
 
 Texting is **new and still being tested**. When an Action has **Send Text** checked, the app schedules each text in **Mongoose**:
 
-- A Mongoose window opens for the run. Log in if Mongoose asks; usually it remembers you.
+- A Mongoose window opens with the first text and stays open while the app is open, so you only log in when Mongoose asks. It closes with the app, or when you click **↻ Refresh Caseload**.
 - Each text goes out from the **department matching the student's course** (for example D424), so it lands in the right shared inbox.
 - Each one is **scheduled**, never sent instantly: for the next time between **10 AM and 8 PM in the student's own time zone**.
-- **For now, you finish each text yourself.** The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.
+- **For now, you finish each text yourself.** Mongoose comes to the front and the progress window says "Waiting for you". The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.
 - The **Text Subject** becomes the text's **Message Name** in Mongoose. Fields like **{{student_name}}** work in the text and its subject.
 - A text can be at most **150 characters**. The Action shows a live count, and Save Action refuses a longer one. Fields like {{student_name}} count as written, so leave some room: if a filled-in text comes out over 150, that student is skipped and listed in the results.
 - A student is **skipped and listed** in the results when the app can't place them safely: no texting ID (try **↻ Refresh Caseload**), no time zone, or not found in that course's Mongoose department (for example, they opted out). Text those students by hand if needed.
 - Texts never write a Salesforce note — Mongoose notes them itself.
+- The app finishes every student's email and note first, across a whole batch. Only then does it open Mongoose for the texts, one student at a time, grouped by course. A text problem can't stop an email or a note. If Mongoose can't be opened, those texts are listed as skipped.
 
 **⬇ Sync Texting IDs** and **↻ Restart Browser** are placeholders and do nothing yet.
 
@@ -171,7 +172,7 @@ Your groups, Actions, templates, saved batches, and logs are kept in your own Wi
 
 - **No student roster is ever saved.** It's loaded fresh each session and kept only in memory.
 - **The app never saves your Salesforce password.** The login window keeps its own Edge profile (in the **edge-profile** folder) so WGU sign-in recognizes this computer. Pages it loads, including your Caseload page, are cleared from that profile right after you log in.
-- **Logs are kept for today only** and are deleted the next time you start the app. They exist so you can follow up on anything that failed today. If a Salesforce note or a Mongoose text fails, a screenshot of the page is saved under **logs\screenshots** for the same purpose.
+- **Logs are kept for today only** and are deleted the next time you start the app. They exist so you can follow up on anything that failed today. If a Salesforce note or a Mongoose text fails, the app saves a screenshot of the page for the same purpose. To see them, click **🖼 Open Screenshots Folder** at the bottom of **❓ Help**. Screenshots can show student information, so don't email them.
 - **The diagnostics log has no student information** and is kept for **14 days**, in **logs\diagnostics**. It's for troubleshooting: what you clicked and chose (as counts), the app version, and the full details of every error, each marked **Outside problem** (something you can fix or retry, such as Outlook being closed) or **App error** (most likely a bug). Before anything is written there, student names, IDs, emails, phone numbers, and texting IDs are replaced with placeholders such as **[student]**.
 
 ## Troubleshooting
@@ -198,4 +199,4 @@ Make sure Microsoft Edge is installed and up to date.
 That's a WGU sign-in issue, not the app. Contact the IT Service Desk. You can still use the app for setup in the meantime.
 
 **"Something went wrong"** (or any problem you want help with)
-Send the **diagnostics log** for that day, from **%LOCALAPPDATA%\CaseloadTool\logs\diagnostics**, to whoever supports the app. It's safe to share: it contains no student information, and it's kept for 14 days, so it still helps a few days later. Today's regular log (in **logs**) has more detail but includes student names — don't email it.
+Click **🛠 Open Diagnostics Log**, in the results window or at the bottom of **❓ Help**. It opens today's log, ready to copy and send to whoever supports the app. For an earlier day, the files are in **%LOCALAPPDATA%\CaseloadTool\logs\diagnostics**. It's safe to share: it contains no student information, and it's kept for 14 days, so it still helps a few days later. Today's regular log (in **logs**) has more detail but includes student names — don't email it.

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from src.models.student import Student
@@ -30,7 +32,7 @@ class _NoBrowser(mts.MongooseTextSender):
     def _go_home(self):
         pass
 
-    def _wait_for_review(self):
+    def _wait_for_review(self, student):
         self.reviewed = True
 
 
@@ -95,3 +97,61 @@ def test_the_time_typed_into_mongoose_is_the_same_moment_as_the_students_time():
 def test_unknown_mode_is_refused():
     with pytest.raises(ValueError):
         mts.MongooseTextSender("sometimes")
+
+
+def _open_sender(page):
+    sender = mts.MongooseTextSender(mode=mts.REVIEW)
+    sender._page = page
+    return sender
+
+
+def test_review_brings_mongoose_forward_and_says_its_waiting_on_you():
+    page = MagicMock()
+    sender = _open_sender(page)
+    sender.on_waiting = MagicMock()
+
+    sender._wait_for_review(_student())
+
+    page.bring_to_front.assert_called_once()
+    assert "click Schedule or Cancel" in sender.on_waiting.call_args[0][0]
+
+
+def test_an_open_window_is_reused_between_runs():
+    page = MagicMock()
+    page.is_closed.return_value = False
+    sender = _open_sender(page)
+
+    sender.ensure_ready()
+    sender.finish()
+
+    assert sender._page is page
+    page.goto.assert_not_called()
+
+
+def test_a_window_the_professor_closed_is_opened_again(monkeypatch):
+    closed_page, new_page = MagicMock(), MagicMock()
+    closed_page.is_closed.return_value = True
+    context = MagicMock(pages=[new_page])
+    monkeypatch.setattr(mts, "acquire_playwright", MagicMock())
+    monkeypatch.setattr(mts, "release_playwright", MagicMock())
+    monkeypatch.setattr(mts, "launch_login_context", lambda *_a, **_k: context)
+    sender = _open_sender(closed_page)
+
+    sender.ensure_ready()
+
+    assert sender._page is new_page
+    new_page.goto.assert_called_once_with(mts.MONGOOSE_URL)
+
+
+def test_closing_keeps_mongooses_sign_in(monkeypatch):
+    clear = MagicMock()
+    monkeypatch.setattr(mts, "clear_cached_pages", clear)
+    context = MagicMock()
+    sender = _open_sender(MagicMock())
+    sender._context = context
+
+    sender.close()
+
+    clear.assert_called_once_with(context, mts.MONGOOSE_URL, keep_local_storage=True)
+    context.close.assert_called_once()
+    assert sender._page is None

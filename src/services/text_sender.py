@@ -5,7 +5,7 @@ available. The real adapter (mongoose_text_sender.py) implements this same
 interface.
 """
 from abc import ABC, abstractmethod
-from typing import List, Optional, Set
+from typing import Callable, List, Optional, Set
 
 from src.models.student import Student
 
@@ -21,6 +21,9 @@ class TextSkipped(Exception):
 
 
 class TextSender(ABC):
+    # Called with a message when a text is waiting on the professor.
+    on_waiting: Optional[Callable[[str], None]] = None
+
     @abstractmethod
     def send(self, student: Student, body: str, message_name: str) -> str:
         """Sends or schedules a text to `student`, with `message_name` as the
@@ -36,6 +39,10 @@ class TextSender(ABC):
     def finish(self) -> None:
         """Called once after such a run, even if it failed or was stopped
         (e.g. to close the browser). No-op by default."""
+
+    def close(self) -> None:
+        """Ends any connection kept between runs. Must not raise. No-op by
+        default."""
 
 
 class FakeTextSender(TextSender):

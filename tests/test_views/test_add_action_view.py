@@ -274,7 +274,6 @@ def test_note_fields_are_disabled_until_send_email_is_checked(ctk_root):
     assert view.note_subject.cget("state") == "normal"
     assert view.note_body.cget("state") == "normal"
     assert view.followup_note.cget("state") == "normal"
-    assert view.interaction_menu.cget("state") == "normal"
 
 
 def test_editing_a_text_only_action_keeps_its_saved_note_content(ctk_root):

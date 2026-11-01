@@ -780,15 +780,17 @@ def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
     assert "login window was closed" in controller._startup_problem
 
 
-def test_refresh_closes_the_notes_browser_before_reloading():
+def test_refresh_closes_the_session_browsers_before_reloading():
     controller = MagicMock()
     calls = MagicMock()
     controller.note_writer = calls.writer
+    controller.text_sender = calls.texts
     controller._load_caseload_logging_in_if_needed = calls.load
+    controller._close_session_browsers = AppController._close_session_browsers.__get__(controller, AppController)
 
     AppController._refresh_caseload(controller)
 
-    assert [c[0] for c in calls.mock_calls] == ["writer.close", "load"]
+    assert [c[0] for c in calls.mock_calls] == ["writer.close", "texts.close", "load"]
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")

@@ -252,9 +252,93 @@ def test_an_email_and_text_action_still_writes_the_note_when_the_text_is_skipped
     summary = runner.run(action, group_name="D424")
 
     assert [(r.step_type, r.outcome) for r in summary.results] == [
-        ("email", "success"), ("text", "skipped"), ("note", "success"),
+        ("email", "success"), ("note", "success"), ("text", "skipped"),
     ]
     assert runner.note_writer.written[0]["subject"] == "Welcome Email"
+
+
+from src.services.action_runner import RunControl
+
+
+def _email_note_and_text_action():
+    return Action(
+        name="Welcome", is_email=True, is_text=True, template_id="T3", email_subject="Hi", email_signature="Sig",
+        text_body="Hello", note_subject="Welcome Email", note_body="Sent", follow_up_note="Welcome Email",
+    )
+
+
+def test_the_note_is_saved_before_the_text_is_tried():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    notes_when_texting = []
+    runner.text_sender.send.side_effect = lambda *_: notes_when_texting.append(len(runner.note_writer.written)) or "ok"
+
+    runner.run(_email_note_and_text_action(), group_name="D424")
+
+    assert notes_when_texting == [1]
+
+
+def test_mongoose_failing_to_open_still_sends_the_email_and_writes_the_note():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    runner.text_sender.ensure_ready.side_effect = RuntimeError("Mongoose login wasn't finished")
+
+    summary = runner.run(_email_note_and_text_action(), group_name="D424")
+
+    assert [(r.step_type, r.outcome) for r in summary.results] == [
+        ("email", "success"), ("note", "success"), ("text", "skipped"),
+    ]
+    assert "Mongoose login wasn't finished" in summary.results[2].detail
+    runner.text_sender.send.assert_not_called()
+
+
+def test_mongoose_failing_to_open_lists_a_text_only_run_as_skipped():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    runner.text_sender.ensure_ready.side_effect = RuntimeError("Mongoose login wasn't finished")
+    action = Action(name="Reminder", is_text=True, text_body="Hello")
+
+    summary = runner.run(action, group_name="D424")
+
+    assert [(r.step_type, r.outcome) for r in summary.results] == [("text", "skipped")]
+
+
+def test_mongoose_only_opens_after_every_students_email_and_note():
+    runner = _runner([_student(), _student()])
+    runner.text_sender = MagicMock()
+    notes_when_opened = []
+    runner.text_sender.ensure_ready.side_effect = lambda: notes_when_opened.append(len(runner.note_writer.written))
+
+    runner.run(_email_note_and_text_action(), group_name="D424")
+
+    assert notes_when_opened == [2]
+    assert runner.text_sender.send.call_count == 2
+
+
+def test_a_batch_finishes_every_actions_emails_and_notes_before_any_text():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    notes_when_opened = []
+    runner.text_sender.ensure_ready.side_effect = lambda: notes_when_opened.append(len(runner.note_writer.written))
+    action = _email_note_and_text_action()
+
+    summary = runner.run_batch([(action, "D424"), (action, "D424")])
+
+    assert notes_when_opened == [2]
+    runner.text_sender.ensure_ready.assert_called_once()
+    assert [r.step_type for r in summary.items[1].summary.results] == ["email", "note", "text"]
+
+
+def test_stopping_during_the_emails_leaves_the_texts_unsent_and_listed():
+    runner = _runner([_student()])
+    runner.text_sender = MagicMock()
+    control = RunControl()
+    runner.email_sender.send = MagicMock(side_effect=lambda *a, **k: control.request_stop())
+
+    summary = runner.run(_email_note_and_text_action(), group_name="D424", control=control)
+
+    runner.text_sender.send.assert_not_called()
+    assert summary.results[-1].step_type == "text" and summary.results[-1].outcome == "skipped"
 
 
 def test_a_text_over_the_limit_is_skipped_and_never_reaches_mongoose():
@@ -269,3 +353,15 @@ def test_a_text_over_the_limit_is_skipped_and_never_reaches_mongoose():
     runner.text_sender.send.assert_not_called()
     assert summary.results[0].outcome == "skipped"
     assert "152 characters" in summary.results[0].detail
+
+
+def test_preview_shows_a_welcome_actions_filled_in_email_and_text():
+    runner = _runner([])
+    action = Action(
+        name="D424Welcome", is_email=True, is_text=True, template_id="T3",
+        email_subject="Welcome, {{student_name}}", text_body="Hi {{student_name}}",
+    )
+
+    preview = runner.preview_for(action, _student())
+
+    assert preview == "Subject: Welcome, Jane\n\nHere are the Task 3 tips.\n\nText: Hi Jane"

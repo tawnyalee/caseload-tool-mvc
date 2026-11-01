@@ -579,13 +579,14 @@ class AppController:
             return
         actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
         eligible_groups = [g for g in self.groups if g.welcome_action_id and g.welcome_action_id in actions_by_id]
-        review_items = [
-            MultiReviewItem(
-                key=group.id, label=f"{group.name} — {actions_by_id[group.welcome_action_id].name}",
-                students=self.action_runner.get_matching_students(actions_by_id[group.welcome_action_id]),
-            )
-            for group in eligible_groups
-        ]
+        review_items = []
+        for group in eligible_groups:
+            action = actions_by_id[group.welcome_action_id]
+            students = self.action_runner.get_matching_students(action)
+            review_items.append(MultiReviewItem(
+                key=group.id, label=f"{group.name} — {action.name}", students=students,
+                preview=self.action_runner.preview_for(action, students[0]) if students else "",
+            ))
 
         def _on_confirm(selections):
             self._log_review_choice(
@@ -1334,20 +1335,26 @@ class AppController:
             self._active_run.request_stop()
 
     def _refresh_caseload(self):
-        """Runs on the background thread, which owns the notes' browser."""
-        note_writer = getattr(self, "note_writer", None)
-        if note_writer is not None:
-            note_writer.close()  # its page is showing the old caseload
+        """Runs on the background thread, which owns the session's browsers."""
+        self._close_session_browsers()
         return self._load_caseload_logging_in_if_needed()
 
-    def _close_note_browser_before_exit(self) -> None:
-        """Asks the background thread to close the hidden notes browser, and
-        waits briefly so it isn't left running."""
+    def _close_session_browsers(self) -> None:
+        """The notes page is showing the old caseload, and Mongoose's window
+        would lock the Edge profile a new Salesforce login needs."""
+        for name in ("note_writer", "text_sender"):
+            sender = getattr(self, name, None)
+            if sender is not None:
+                sender.close()
+
+    def _close_browsers_before_exit(self) -> None:
+        """Asks the background thread to close the session's browsers, and
+        waits briefly so they aren't left running."""
         closed = threading.Event()
 
         def _close():
             try:
-                self.note_writer.close()
+                self._close_session_browsers()
             finally:
                 closed.set()
 
@@ -1408,7 +1415,7 @@ class AppController:
         ):
             return
         if self._active_run is None:
-            self._close_note_browser_before_exit()
+            self._close_browsers_before_exit()
         self.root.destroy()
 
     def _on_unexpected_error(self, exc_type, exc, tb) -> None:
@@ -1481,6 +1488,7 @@ class AppController:
         control.on_progress = lambda position, total, text: self.ui.call_soon(
             window.update_progress, position, total, text
         )
+        control.on_status = lambda text: self.ui.call_soon(window.set_status, text)
         self._active_run = control
         self._progress_window = window
 

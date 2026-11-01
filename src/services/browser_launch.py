@@ -99,11 +99,13 @@ def launch_login_context(playwright: Playwright, headless: bool = False) -> Brow
         raise
 
 
-def clear_cached_pages(context: BrowserContext, url: str) -> None:
+def clear_cached_pages(context: BrowserContext, url: str, keep_local_storage: bool = False) -> None:
     """Drops `url`'s site's cached pages and site storage from the saved
     profile, keeping only its cookies. The login waits on the Caseload page,
     so without this the roster could sit in Edge's cache on disk - and no
-    student data may outlive an app session (FERPA, developer's rule)."""
+    student data may outlive an app session (FERPA, developer's rule).
+    `keep_local_storage` is for a site that keeps its sign-in there, as
+    Mongoose appears to: clearing it signed the professor out every run."""
     if not context.pages:
         return
     parts = urlparse(url)
@@ -113,7 +115,10 @@ def clear_cached_pages(context: BrowserContext, url: str) -> None:
         if parts.scheme in ("http", "https"):
             cdp.send("Storage.clearDataForOrigin", {
                 "origin": f"{parts.scheme}://{parts.netloc}",
-                "storageTypes": "file_systems,indexeddb,local_storage,cache_storage,service_workers,websql,shader_cache",
+                "storageTypes": (
+                    "file_systems,indexeddb,cache_storage,service_workers,websql,shader_cache"
+                    + ("" if keep_local_storage else ",local_storage")
+                ),
             })
     finally:
         cdp.detach()

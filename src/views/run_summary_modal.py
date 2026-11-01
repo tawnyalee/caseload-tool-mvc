@@ -6,9 +6,17 @@ list of failures would run off the screen; this can.
 
 The daily log file is the backup if this window gets closed by accident.
 """
+import tkinter.messagebox as messagebox
 from typing import List
 
 import customtkinter as ctk
+
+from src.services.diagnostics import open_todays_log
+
+
+def open_diagnostics_or_explain() -> None:
+    if not open_todays_log():
+        messagebox.showinfo("Diagnostics Log", "There's no diagnostics log for today yet.")
 
 
 class RunSummaryModal(ctk.CTkToplevel):
@@ -35,6 +43,11 @@ class RunSummaryModal(ctk.CTkToplevel):
             text_color=("black", "white"), command=self._copy_to_clipboard,
         )
         self.copy_button.pack(side="right", padx=(0, 8))
+        self.diagnostics_button = ctk.CTkButton(
+            btn_row, text="🛠 Open Diagnostics Log", fg_color="transparent", border_width=1,
+            text_color=("black", "white"), command=open_diagnostics_or_explain,
+        )
+        self.diagnostics_button.pack(side="left")
 
         ctk.CTkLabel(
             self, text="Needs manual follow-up:", font=ctk.CTkFont(weight="bold"),

@@ -2,7 +2,9 @@ from datetime import date, timedelta
 
 from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
-from src.services.diagnostics import APP_ERROR, OUTSIDE_PROBLEM, Diagnostics, classify
+from src.services.diagnostics import (
+    APP_ERROR, OUTSIDE_PROBLEM, Diagnostics, classify, open_screenshots_folder, open_todays_log,
+)
 
 
 def _jane():
@@ -34,6 +36,19 @@ def test_shapes_are_scrubbed_even_for_people_not_on_the_roster(tmp_path):
     text = _today_text(diag)
     assert "[email]" in text and "[phone]" in text and "[contact-id]" in text and "[number]" in text
     assert "someone" not in text and "12345678" not in text
+
+
+def test_ids_and_names_inside_file_names_are_scrubbed(tmp_path):
+    diag = Diagnostics(tmp_path)
+    diag.set_roster([_jane()])
+    diag.line(r"Screenshot: C:\logs\screenshots\20261031-111500-write_note_000562489.png")
+    diag.line("saved note_Jane_Doe.png and text_0033x000038KA8HAAW.png")
+    diag.line("not on the roster: write_note_987654321.png, text_0031a000004XyZ9AAB.png")
+
+    text = _today_text(diag)
+    for secret in ("000562489", "Jane", "Doe", "0033x000038KA8HAAW", "987654321", "0031a000004XyZ9AAB"):
+        assert secret not in text
+    assert "write_note_[student].png" in text
 
 
 def test_ordinary_words_dates_and_course_codes_are_left_alone(tmp_path):
@@ -95,3 +110,29 @@ def test_activity_log_keeps_names_while_the_diagnostics_copy_drops_them(tmp_path
     assert "Jane" not in diagnostics
     assert "[EMAIL] Sent to [student] <[student]>" in diagnostics
     assert "[OUTSIDE PROBLEM] [TEXT FAILED] [student]: Outlook isn't open" in diagnostics
+
+
+def test_open_todays_log_opens_the_file_when_there_is_one(tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr("src.services.app_paths.logs_dir", lambda: tmp_path)
+    monkeypatch.setattr("src.services.diagnostics.os.startfile", opened.append, raising=False)
+
+    assert open_todays_log() is False
+
+    log = tmp_path / "diagnostics" / f"{date.today().isoformat()}.log"
+    log.parent.mkdir()
+    log.write_text("x")
+
+    assert open_todays_log() is True
+    assert opened == [log]
+
+
+def test_the_screenshots_folder_opens_even_before_anything_has_failed(tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr("src.services.app_paths.logs_dir", lambda: tmp_path)
+    monkeypatch.setattr("src.services.diagnostics.os.startfile", opened.append, raising=False)
+
+    open_screenshots_folder()
+
+    assert opened == [tmp_path / "screenshots"]
+    assert opened[0].is_dir()

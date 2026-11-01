@@ -1,9 +1,10 @@
 # src/services/mongoose_text_sender.py
 """The app's real TextSender: schedules each text in Mongoose.
 
-One browser window per run (ensure_ready opens it, finish closes it), on the
-app's saved Edge profile, so Mongoose recognizes the device and the professor
-only logs in when Mongoose asks. It stays visible on purpose. Driving it all
+One browser window for the whole app session (ensure_ready opens it, close
+ends it on Refresh Caseload or when the app closes), on the app's saved Edge
+profile, so the professor only logs in when Mongoose asks. It stays visible
+on purpose. Driving it all
 happens on the BackgroundWorker thread, since Playwright's sync API must stay
 on the thread that started it.
 
@@ -66,8 +67,9 @@ class MongooseTextSender(TextSender):
         self._page = None
 
     def ensure_ready(self) -> None:
-        if self._page is not None:
+        if self._page is not None and not self._page.is_closed():
             return
+        self.close()  # the professor may have closed the window between runs
         from playwright.sync_api import Error as PlaywrightError
 
         self._playwright = acquire_playwright()
@@ -76,10 +78,10 @@ class MongooseTextSender(TextSender):
             self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
             self._go_home()
         except PlaywrightError:
-            self.finish()
+            self.close()
             raise RuntimeError("Mongoose couldn't be opened, or its window was closed before login finished.") from None
         except Exception:
-            self.finish()
+            self.close()
             raise
 
     def _go_home(self) -> None:
@@ -125,7 +127,7 @@ class MongooseTextSender(TextSender):
         if self.mode == DRY_RUN:
             return f"TEST MODE - filled in for {when}, not scheduled"
         if self.mode == REVIEW:
-            self._wait_for_review()
+            self._wait_for_review(student)
             return f"Filled in for {when}; you clicked Schedule or Cancel in Mongoose"
         return f"Scheduled for {when}"
 
@@ -144,9 +146,16 @@ class MongooseTextSender(TextSender):
         except Exception:
             return "not available"
 
-    def _wait_for_review(self) -> None:
+    def _wait_for_review(self, student: Student) -> None:
+        """Says plainly that it's the professor's turn. A window left behind
+        others looked like a frozen run (developer, 2026-10-31)."""
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+        self._page.bring_to_front()
+        if self.on_waiting:
+            self.on_waiting(
+                f"Waiting for you: click Schedule or Cancel in the Mongoose window for {student.full_name}."
+            )
         try:
             self._page.get_by_role("textbox", name="Message Name").wait_for(
                 state="hidden", timeout=REVIEW_TIMEOUT_MS
@@ -154,12 +163,13 @@ class MongooseTextSender(TextSender):
         except PlaywrightTimeoutError:
             raise RuntimeError("Nobody clicked Schedule or Cancel within 10 minutes - not scheduled") from None
 
-    def finish(self) -> None:
-        """Clears Mongoose's cached pages from the profile, then closes the
-        window. Never raises: it runs after every texting run, even a failed one."""
+    def close(self) -> None:
+        """Clears Mongoose's cached pages from the profile, keeping its
+        sign-in, then closes the window. Called on Refresh Caseload and when
+        the app closes, on the background thread. Never raises."""
         if self._context is not None:
             try:
-                clear_cached_pages(self._context, MONGOOSE_URL)
+                clear_cached_pages(self._context, MONGOOSE_URL, keep_local_storage=True)
             except Exception:
                 pass
             try:

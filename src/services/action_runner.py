@@ -52,6 +52,7 @@ class RunControl:
 
     def __init__(self, on_progress: Optional[Callable[[int, int, str], None]] = None):
         self.on_progress = on_progress
+        self.on_status: Optional[Callable[[str], None]] = None
         self.context = ""  # e.g. "D424 — Welcome Action (2 of 3)", set by batch-style runs
         self._stop = threading.Event()
 
@@ -61,6 +62,11 @@ class RunControl:
     @property
     def stop_requested(self) -> bool:
         return self._stop.is_set()
+
+    def say(self, text: str) -> None:
+        """Shows a message in place of the progress line."""
+        if self.on_status:
+            self.on_status(text)
 
     def report(self, position: int, total: int, student_name: str) -> None:
         if self.on_progress:
@@ -112,6 +118,15 @@ class ActionRunSummary:
     @property
     def skipped_steps(self) -> List[StepResult]:
         return [r for r in self.results if r.outcome == "skipped"]
+
+
+@dataclass
+class QueuedText:
+    """A text waiting for the emails and notes to finish. Its result goes on
+    the summary of the run that queued it."""
+    student: Student
+    action: Action
+    summary: ActionRunSummary
 
 
 @dataclass
@@ -181,6 +196,18 @@ class ActionRunner:
             if in_group_course(s, course_code) and matches_student(s, action.filters)
         ]
 
+    def preview_for(self, action: Action, student: Student) -> str:
+        """What this action sends `student`, as text for a review window."""
+        parts = []
+        if action.is_email:
+            template = self.template_repo.get_by_id(action.template_id) if action.template_id else None
+            subject = render_merge_fields(action.email_subject, student)
+            body = html_to_plain_text(render_merge_fields(template.body, student)) if template else "(no email template)"
+            parts.append(f"Subject: {subject}\n\n{body}")
+        if action.is_text:
+            parts.append(f"Text: {render_merge_fields(action.text_body, student)}")
+        return "\n\n".join(parts)
+
     def run(
         self,
         action: Action,
@@ -189,9 +216,13 @@ class ActionRunner:
         email_subject_override: Optional[str] = None,
         email_body_override: Optional[str] = None,
         control: Optional[RunControl] = None,
+        text_queue: Optional[List["QueuedText"]] = None,
     ) -> ActionRunSummary:
         """`control`, when given, receives progress and can stop the run
-        between students (see RunControl). `included_student_ids`, when given, further restricts the
+        between students (see RunControl). `text_queue`, when given, collects
+        this run's texts for the caller to send after its other actions (see
+        _send_queued_texts); otherwise they go out at the end of this run.
+        `included_student_ids`, when given, further restricts the
         filter-matched students to just those IDs - how the pre-send review
         dialog's checkbox deselection actually takes effect. None (the
         default) means every filter-matched student runs, same as before
@@ -225,14 +256,11 @@ class ActionRunner:
         self.activity_logger.log(f"'{action.name}' is currently running for {len(students)} students")
         if action.is_email and students:
             self.email_sender.ensure_ready()  # e.g. Outlook not open: stop now, not once per student
-        texting = action.is_text and bool(students)
-        if texting:
-            if len(action.text_body) > MAX_TEXT_LENGTH:
-                self.activity_logger.log(
-                    f"[TEXT LENGTH] The text is {len(action.text_body)} characters before personalizing "
-                    f"(the limit is {MAX_TEXT_LENGTH}); shorten it on the Action"
-                )
-            self.text_sender.ensure_ready()  # e.g. log in to Mongoose once, before the first student
+        if action.is_text and students and len(action.text_body) > MAX_TEXT_LENGTH:
+            self.activity_logger.log(
+                f"[TEXT LENGTH] The text is {len(action.text_body)} characters before personalizing "
+                f"(the limit is {MAX_TEXT_LENGTH}); shorten it on the Action"
+            )
         has_note_content = bool(action.note_subject or action.note_body or action.follow_up_note)
         # Only email gets a note: Mongoose writes its own note for every text
         # at the end of the day, so a text-only action never writes one here.
@@ -242,6 +270,7 @@ class ActionRunner:
                 "Note step not run — this action doesn't send email, and texts are noted automatically by Mongoose"
             )
         summary = ActionRunSummary()
+        texts = [] if text_queue is None else text_queue
         if writes_note:
             self.note_writer.start_run()
         try:
@@ -261,9 +290,6 @@ class ActionRunner:
                     summary.results.append(result)
                     email_ok = result.outcome == "success"
 
-                if action.is_text:
-                    summary.results.append(self._attempt_text(student, action))
-
                 if writes_note:
                     if email_ok:
                         summary.results.append(
@@ -278,12 +304,15 @@ class ActionRunner:
                         summary.results.append(
                             StepResult(student=student, step_type="note", outcome="skipped", detail=detail)
                         )
+
+                if action.is_text:
+                    texts.append(QueuedText(student, action, summary))
         finally:
             if writes_note:
                 self.note_writer.finish_run()
-            if texting:
-                self.text_sender.finish()
 
+        if text_queue is None:
+            self._send_queued_texts(texts, control)
         self.activity_logger.log(
             f"Run complete — {summary.succeeded} succeeded, {summary.failed} failed, {summary.skipped} skipped"
         )
@@ -303,6 +332,8 @@ class ActionRunner:
         per-group deselection takes effect (see run())."""
         self.activity_logger.log("Starting welcome-email run across all groups")
         combined = ActionRunSummary()
+        texts: List[QueuedText] = []
+        group_summaries = []
 
         for group in groups:
             if not group.welcome_action_id:
@@ -318,9 +349,13 @@ class ActionRunner:
             included_ids = included_ids_by_group_id.get(group.id) if included_ids_by_group_id else None
             if control:
                 control.context = f"{group.name} — {action.name}"
-            group_summary = self.run(action, group_name=group.name, included_student_ids=included_ids, control=control)
-            combined.results.extend(group_summary.results)
+            group_summaries.append(self.run(
+                action, group_name=group.name, included_student_ids=included_ids, control=control, text_queue=texts,
+            ))
 
+        self._send_queued_texts(texts, control)
+        for group_summary in group_summaries:
+            combined.results.extend(group_summary.results)
         self.activity_logger.log(
             f"Welcome-email run complete — {combined.succeeded} succeeded, "
             f"{combined.failed} failed, {combined.skipped} skipped"
@@ -431,13 +466,17 @@ class ActionRunner:
         more than once in a batch against different groups."""
         self.activity_logger.log(f"Starting batch run — {len(items)} action(s)")
         batch_summary = BatchRunSummary()
+        texts: List[QueuedText] = []
 
         for i, (action, group_name) in enumerate(items):
             included_ids = included_ids_by_index.get(i) if included_ids_by_index else None
             if control:
                 control.context = f"{group_name} — {action.name} ({i + 1} of {len(items)})"
             try:
-                summary = self.run(action, group_name=group_name, included_student_ids=included_ids, control=control)
+                summary = self.run(
+                    action, group_name=group_name, included_student_ids=included_ids, control=control,
+                    text_queue=texts,
+                )
                 batch_summary.items.append(
                     BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
                 )
@@ -452,6 +491,7 @@ class ActionRunner:
                     )
                 )
 
+        self._send_queued_texts(texts, control)
         self.activity_logger.log(
             f"Batch run complete — {batch_summary.succeeded} succeeded, "
             f"{batch_summary.failed} failed, {batch_summary.skipped} skipped "
@@ -519,6 +559,42 @@ class ActionRunner:
             f"{summary.failed} failed, {summary.skipped} skipped"
         )
         return summary
+
+    def _send_queued_texts(self, texts: List[QueuedText], control: Optional[RunControl]) -> None:
+        """Every email and note comes first; Mongoose only opens once they're
+        done (developer, 2026-11-01: they're essential, the text is a bonus).
+        So no problem here can cost an email or note. If Mongoose can't open,
+        the texts are listed as skipped. Same-course texts run together, since
+        each course is its own Mongoose department."""
+        if not texts:
+            return
+        self.activity_logger.log(f"Emails and notes are done - starting {len(texts)} text(s)")
+        if control:
+            control.context = "Texts"
+        self.text_sender.on_waiting = control.say if control else None
+        problem = ""
+        try:
+            self.text_sender.ensure_ready()  # e.g. log in to Mongoose once, before the first text
+        except Exception as exc:
+            problem = f"Texting wasn't available: {exc}"
+            self.activity_logger.log_failure(f"[TEXT UNAVAILABLE] {exc}", exc)
+        queue = sorted(texts, key=lambda text: text.student.course_code)
+        try:
+            for position, text in enumerate(queue, start=1):
+                if not problem and control and control.stop_requested:
+                    problem = "Run was stopped before this text"
+                    self.activity_logger.log("[STOPPED] Run stopped by the user - remaining texts not started")
+                if problem:
+                    self.activity_logger.log(f"[TEXT SKIPPED] {text.student.full_name}: {problem}")
+                    text.summary.results.append(
+                        StepResult(student=text.student, step_type="text", outcome="skipped", detail=problem)
+                    )
+                    continue
+                if control:
+                    control.report(position, len(queue), text.student.full_name)
+                text.summary.results.append(self._attempt_text(text.student, text.action))
+        finally:
+            self.text_sender.finish()
 
     def _stopped(self, control: Optional[RunControl], remaining: List[Student], summary: ActionRunSummary) -> bool:
         """If a stop was requested, marks every remaining student as not
@@ -604,8 +680,8 @@ class ActionRunner:
         body = render_merge_fields(action.text_body, student)
         message_name = render_merge_fields(action.text_subject, student) or action.name
         if len(body) > MAX_TEXT_LENGTH:
-            # Mongoose stalls on a text this long. It can get here from an
-            # older action, or from a merge field filling in a long value.
+            # It can get here from an older action, or from a merge field
+            # filling in a long value.
             detail = f"Text is {len(body)} characters, over the {MAX_TEXT_LENGTH} limit - not sent"
             self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {detail}")
             return StepResult(student=student, step_type="text", outcome="skipped", detail=detail)

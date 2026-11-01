@@ -19,6 +19,7 @@ for KEEP_DAYS days and to send to whoever supports the app. Files live in
 logs/diagnostics/YYYY-MM-DD.log.
 """
 import logging
+import os
 import platform
 import re
 import sys
@@ -31,10 +32,16 @@ KEEP_DAYS = 14
 OUTSIDE_PROBLEM = "Outside problem"
 APP_ERROR = "App error"
 
+# Like \b, but "_" counts as a break. \b treats "_" as part of a word, so an ID
+# inside a file name (write_note_000562489.png) got past the scrubbing (found
+# in a live log, 2026-10-31).
+_START = r"(?<![^\W_])"
+_END = r"(?![^\W_])"
+
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
-_CONTACT_ID = re.compile(r"\b003[A-Za-z0-9]{12,15}\b")
-_PHONE = re.compile(r"\(?\b\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b")
-_LONG_NUMBER = re.compile(r"\b\d{6,}\b")
+_CONTACT_ID = re.compile(rf"{_START}003[A-Za-z0-9]{{12,15}}{_END}")
+_PHONE = re.compile(rf"\(?{_START}\d{{3}}\)?[-.\s]\d{{3}}[-.\s]\d{{4}}{_END}")
+_LONG_NUMBER = re.compile(rf"{_START}\d{{6,}}{_END}")
 
 
 def classify(exc: BaseException) -> str:
@@ -51,6 +58,29 @@ def classify(exc: BaseException) -> str:
     if module.startswith(("playwright", "pywintypes")) or type(exc).__name__ == "com_error":
         return OUTSIDE_PROBLEM
     return APP_ERROR
+
+
+def open_todays_log() -> bool:
+    """Opens today's diagnostics log in the computer's text editor, so a
+    professor can copy it without finding the hidden folder. False if there's
+    no log yet today."""
+    from src.services import app_paths
+
+    path = Path(app_paths.logs_dir()) / "diagnostics" / f"{date.today().isoformat()}.log"
+    if not path.exists():
+        return False
+    os.startfile(path)
+    return True
+
+
+def open_screenshots_folder() -> None:
+    """Opens the folder of failure screenshots in File Explorer. Created if
+    nothing has failed yet, so the button always opens something."""
+    from src.services import app_paths
+
+    folder = Path(app_paths.screenshots_dir())
+    folder.mkdir(parents=True, exist_ok=True)
+    os.startfile(folder)
 
 
 def app_version() -> str:
@@ -126,7 +156,7 @@ class Diagnostics:
         # would also blank out ordinary words like "will" or "may".
         self._terms = sorted(terms, key=len, reverse=True)
         self._pattern = (
-            re.compile("|".join(rf"(?<!\w){re.escape(t)}(?!\w)" for t in self._terms))
+            re.compile("|".join(rf"{_START}{re.escape(t)}{_END}" for t in self._terms))
             if self._terms else None
         )
 

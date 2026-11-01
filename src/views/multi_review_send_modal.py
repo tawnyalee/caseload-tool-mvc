@@ -91,7 +91,7 @@ class MultiReviewSendModal(ctk.CTkToplevel):
         ).pack(side="left")
 
         if item.preview:
-            ctk.CTkLabel(section, text="Email (shown for the first student):", text_color=("gray35", "gray65")).pack(
+            ctk.CTkLabel(section, text="Message (shown for the first student):", text_color=("gray35", "gray65")).pack(
                 anchor="w", padx=10
             )
             preview_box = ctk.CTkTextbox(section, height=130, wrap="word")

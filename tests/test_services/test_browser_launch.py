@@ -5,7 +5,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from src.services import app_paths
 from src.services.browser_launch import (
-    BROWSER_CHANNEL, acquire_playwright, launch_browser, launch_login_context, playwright_session, release_playwright,
+    BROWSER_CHANNEL, acquire_playwright, clear_cached_pages, launch_browser, launch_login_context, playwright_session, release_playwright,
 )
 
 
@@ -90,3 +90,16 @@ def test_the_last_user_stops_the_connection(monkeypatch):
     fake.start.return_value.stop.assert_not_called()
     release_playwright()
     fake.start.return_value.stop.assert_called_once()
+
+
+@pytest.mark.parametrize("keep, cleared", [(False, True), (True, False)])
+def test_local_storage_is_cleared_unless_asked_to_keep_it(keep, cleared):
+    cdp = MagicMock()
+    context = MagicMock(pages=[MagicMock()])
+    context.new_cdp_session.return_value = cdp
+
+    clear_cached_pages(context, "https://example.test/page", keep_local_storage=keep)
+
+    types = cdp.send.call_args_list[-1][0][1]["storageTypes"]
+    assert ("local_storage" in types) is cleared
+    assert "indexeddb" in types

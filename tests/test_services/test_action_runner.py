@@ -779,7 +779,10 @@ def test_run_reports_progress_before_each_student(tmp_path):
 
     runner.run(_make_action(template.id), group_name="General", control=RunControl(on_progress=lambda *a: seen.append(a)))
 
-    assert seen == [(1, 3, "Jane Doe"), (2, 3, "John Roe"), (3, 3, "Amy Lee")]
+    assert seen == [
+        (1, 3, "Jane Doe"), (2, 3, "John Roe"), (3, 3, "Amy Lee"),
+        (1, 3, "Texts: Jane Doe"), (2, 3, "Texts: John Roe"), (3, 3, "Texts: Amy Lee"),
+    ]
 
 
 def test_stop_finishes_the_current_student_then_marks_the_rest_not_started(tmp_path):
