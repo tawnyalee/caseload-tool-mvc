@@ -83,7 +83,7 @@ You don't need an Action for this. Set up each course in **⚙ Settings**, choos
 - **Before anything sends:** the review window has one section per email, showing the task, subject, the email's text, and the students getting it. Uncheck anyone who shouldn't get it, or click **Select None** to hold back a whole email.
 - **What they get:** "Hello" and their first name (or preferred name), then your email for the task they passed. Write only the rest of the email in Settings.
 - **Subject:** **Task <next task> Support**, for example **Task 3 Support** after passing Task 2.
-- **In Salesforce:** a note with the same subject, holding the text of the email, and a follow-up note with the same words. That follow-up note is how the app knows the student already got this email, so running it twice won't send it twice.
+- **In Salesforce:** a note with the same subject, holding the text of the email, and a follow-up note with the same words. The app doesn't leave anyone out, even a student you've already contacted, so check the list and untick anyone who shouldn't get this email. If you run it twice for the same days, the same students appear again.
 - **Already submitted the next task?** They get a short congratulations instead of your email.
 
 Anyone who can't get an email because none is set up for that task is listed in the results with the reason.

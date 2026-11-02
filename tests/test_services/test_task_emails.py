@@ -174,13 +174,8 @@ def test_only_students_in_the_course_and_the_days_are_found():
     assert [t.student.salesforce_id for t in emails["G1"]] == ["S1"]
 
 
-def test_a_student_who_already_has_the_follow_up_note_isnt_sent_it_again():
+def test_nobody_who_passed_is_left_out_because_of_their_follow_up_note():
     runner = _runner([_student(course_followup_note="task 3 support")])
-    assert runner.get_task_emails([_course()], 1, MONDAY)["G1"] == []
-
-
-def test_an_older_follow_up_note_doesnt_stop_the_next_email():
-    runner = _runner([_student(course_followup_note="Task 2 Support")])
     assert len(runner.get_task_emails([_course()], 1, MONDAY)["G1"]) == 1
 
 

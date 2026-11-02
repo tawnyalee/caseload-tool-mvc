@@ -366,8 +366,9 @@ class ActionRunner:
         self, groups: List[Group], days: int, today: Optional[date] = None,
     ) -> Dict[str, List[TaskEmail]]:
         """For each course with task emails, by group ID: who passed a task in
-        the look-back days. Anyone whose follow-up note already has this
-        email's subject is left out, so a repeat run can't send it twice."""
+        the look-back days. Nobody who passed is left out, even if already
+        contacted: who gets the email is the professor's call in the review
+        window (developer, 2026-11-01)."""
         students = self.student_provider.get_students()
         found: Dict[str, List[TaskEmail]] = {}
         for group in groups:
@@ -381,11 +382,6 @@ class ActionRunner:
                     continue
                 task_email = build_task_email(student, group, self.template_repo.get_by_id)
                 if task_email is None:
-                    continue
-                if task_email.subject.lower() in student.course_followup_note.lower():
-                    self.activity_logger.log(
-                        f"[SKIPPED] {student.full_name} already has '{task_email.subject}' in their follow-up note"
-                    )
                     continue
                 found[group.id].append(task_email)
         return found
