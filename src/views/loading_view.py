@@ -14,7 +14,7 @@ class LoadingView(ctk.CTkFrame):
         center = ctk.CTkFrame(self, fg_color="transparent")
         center.place(relx=0.5, rely=0.45, anchor="center")
 
-        ctk.CTkLabel(center, text="Caseload Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(pady=(0, 12))
+        ctk.CTkLabel(center, text="TouchPoint", font=ctk.CTkFont(size=22, weight="bold")).pack(pady=(0, 12))
         self.status_label = ctk.CTkLabel(center, text=LOGGING_IN_TEXT, font=ctk.CTkFont(size=14))
         self.status_label.pack(pady=(0, 12))
         self.progress_bar = ctk.CTkProgressBar(center, width=360, mode="indeterminate")

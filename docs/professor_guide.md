@@ -1,6 +1,6 @@
-# Caseload Tool — Professor Guide
+# TouchPoint — Professor Guide
 
-The Caseload Tool sends your routine student outreach for you: it emails students from your own Outlook, then writes the matching note in Salesforce. You decide who gets what with Actions and filters, and you review every send before anything goes out.
+The TouchPoint sends your routine student outreach for you: it emails students from your own Outlook, then writes the matching note in Salesforce. You decide who gets what with Actions and filters, and you review every send before anything goes out.
 
 > This guide is also inside the app: click **❓ Help** at any time.
 

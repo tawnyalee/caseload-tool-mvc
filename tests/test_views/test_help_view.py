@@ -17,7 +17,7 @@ def test_shows_the_whole_guide_formatted_and_read_only(ctk_root):
     view = HelpView(ctk_root)
     try:
         shown = view.textbox.get("1.0", "end")
-        assert "Caseload Tool — Professor Guide" in shown
+        assert "TouchPoint — Professor Guide" in shown
         assert "Stay on Outlook (classic)" in shown
         assert "**" not in shown  # markdown markers are rendered, not shown
         assert view.textbox.cget("state") == "disabled"

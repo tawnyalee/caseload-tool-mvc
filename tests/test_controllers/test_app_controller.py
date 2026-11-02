@@ -1215,3 +1215,44 @@ def test_try_again_reloads_again_and_then_sends(_session):
 
     assert sent == ["sent"]
     assert controller.student_data_provider.refresh.call_count == 2
+
+
+# --- the first-steps pop-up -----------------------------------------------------
+
+def _startup_controller(group_names, actions=(), problem=None):
+    controller = AppController.__new__(AppController)
+    controller.groups = [Group(name=name) for name in group_names]
+    controller.action_repo = MagicMock()
+    controller.action_repo.load_actions.return_value = list(actions)
+    controller._startup_problem = problem
+    return controller
+
+
+@pytest.mark.parametrize("groups,actions,expected", [
+    (["General"], [], True),
+    (["General", "D424"], [], False),
+    (["General"], ["an action"], False),
+])
+def test_first_steps_show_until_there_is_a_group_or_an_action(groups, actions, expected):
+    assert _startup_controller(groups, actions)._needs_first_steps() is expected
+
+
+@patch("controllers.app_controller.FirstStepsWindow")
+@patch("controllers.app_controller.messagebox")
+def test_first_steps_show_even_when_the_login_failed(mock_box, mock_window):
+    controller = _startup_controller(["General"], problem="The caseload couldn't be loaded")
+    controller.root = MagicMock()
+
+    controller._show_startup_messages()
+
+    mock_box.showwarning.assert_called_once()
+    mock_window.assert_called_once()
+
+
+@patch("controllers.app_controller.FirstStepsWindow")
+@patch("controllers.app_controller.messagebox")
+def test_nothing_shows_once_the_app_is_set_up(mock_box, mock_window):
+    _startup_controller(["General", "D424"])._show_startup_messages()
+
+    mock_window.assert_not_called()
+    mock_box.showwarning.assert_not_called()

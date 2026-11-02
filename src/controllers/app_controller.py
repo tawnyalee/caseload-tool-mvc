@@ -38,6 +38,7 @@ from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, LocalOu
 from src.services.action_runner import ActionRunner, RunControl
 from src.services.background_worker import BackgroundWorker, UiDispatcher
 from src.views.dashboard_view import DashboardView
+from src.views.first_steps_window import FirstStepsWindow
 from src.views.loading_view import LOADING_CASELOAD_TEXT, LoadingView
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
@@ -47,6 +48,21 @@ from src.views.run_progress_modal import RunProgressModal
 from src.views.help_view import HelpView
 from src.views.settings_view import SettingsView
 from src.services.run_report import batch_issue_lines, issue_lines
+
+
+FIRST_STEPS_TEXT = (  # the developer's wording
+    "Welcome to TouchPoint! Before you can successfully use the app, you have a few settings to configure.\n\n"
+    "1. Create groups on the main screen with + Add Group. We recommend naming groups with the course codes "
+    "for classes you teach, and checking \"This group is a course.\" If you aren't an instructor, use General "
+    "or group names that make sense for your workflow.\n\n"
+    "2. Click Settings and choose the Default Outlook Signature for emails you send. You can change this later.\n\n"
+    "3. For each course, check that the course code is correct, select whether it has tasks, enter how many, "
+    "and select whether it has an OA.\n\n"
+    "4. For courses with tasks, use New or Edit beside each Passed Task to choose the email a student receives "
+    "after passing that task.\n\n"
+    "5. Click Save Settings.\n\n"
+    "6. Further instructions can be found on the Help page."
+)
 
 
 def _with_fresh_roster(handler):
@@ -112,7 +128,7 @@ class AppController:
         self.worker = BackgroundWorker(dispatch=self.ui.call_soon)
         self._active_run: Optional[RunControl] = None
         self._progress_window: Optional[RunProgressModal] = None
-        self.root.title("Caseload Management Tool")
+        self.root.title("TouchPoint")
         self.root.geometry("1100x650")
 
         # Initialize Repository Service
@@ -219,9 +235,22 @@ class AppController:
 
         self._load_data()
         self._init_views()
-        if self._startup_problem:
-            self.root.after(300, lambda: messagebox.showwarning("Salesforce", self._startup_problem))
+        self.root.after(300, self._show_startup_messages)
     # endregion
+
+    def _show_startup_messages(self) -> None:
+        if self._startup_problem:
+            messagebox.showwarning("Salesforce", self._startup_problem)
+        if self._needs_first_steps():
+            self._first_steps_window = FirstStepsWindow(self.root, FIRST_STEPS_TEXT)
+
+    def _needs_first_steps(self) -> bool:
+        """True until the professor has a group of their own or an Action.
+        Actions count too, since someone who isn't an instructor may only
+        ever use General (developer, 2026-11-02). Shown whether or not they
+        logged in: a first session can be all setup."""
+        has_own_group = any(group.name != "General" for group in self.groups)
+        return not has_own_group and not self.action_repo.load_actions()
 
     def _reload_scenarios_dict(self) -> None:
         """Helper to reload actions from repository and convert list -> dict keyed by name."""
@@ -362,7 +391,7 @@ class AppController:
         # Packed first with side="top" so it spans the whole window above
         # both panels - impossible to miss while test mode is on.
         if self.test_mode:
-            self.root.title("Caseload Management Tool — TEST MODE")
+            self.root.title("TouchPoint — TEST MODE")
             target = self.test_mode_redirect or "NO VALID ADDRESS (sends will fail)"
             ctk.CTkLabel(
                 self.root,
