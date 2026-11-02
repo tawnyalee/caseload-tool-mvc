@@ -1147,7 +1147,7 @@ def test_task_email_actions_review_only_the_student_list(mock_modal, mock_showin
 
 # --- reloading the roster before a send ---------------------------------------
 
-def _send_controller():
+def _send_controller(minutes_old=6.0):
     controller = AppController.__new__(AppController)
     _runs_synchronously(controller)
     controller.student_data_provider = MagicMock(is_loaded=True)
@@ -1155,6 +1155,7 @@ def _send_controller():
     controller.activity_logger = MagicMock()
     controller.text_sender = MagicMock()
     controller.note_writer = MagicMock()
+    controller._roster_loaded_at = time.time() - minutes_old * 60
     return controller
 
 
@@ -1166,13 +1167,32 @@ def _send_clicked(controller, sent):
 
 
 @patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
-def test_the_first_send_uses_the_load_and_later_ones_reload_first(_session):
-    controller, sent = _send_controller(), []
+def test_a_fresh_roster_sends_right_away(_session):
+    controller, sent = _send_controller(minutes_old=4), []
 
     _send_clicked(controller, sent)
+
     controller.student_data_provider.refresh.assert_not_called()
+    assert sent == ["sent"]
+
+
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_a_roster_over_five_minutes_old_reloads_first_even_on_the_first_send(_session):
+    controller, sent = _send_controller(minutes_old=6), []
 
     _send_clicked(controller, sent)
+
+    controller.student_data_provider.refresh.assert_called_once()
+    assert sent == ["sent"]
+
+
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_after_a_reload_the_next_send_doesnt_reload_again(_session):
+    controller, sent = _send_controller(minutes_old=6), []
+
+    _send_clicked(controller, sent)
+    _send_clicked(controller, sent)
+
     controller.student_data_provider.refresh.assert_called_once()
     assert sent == ["sent", "sent"]
 
@@ -1180,7 +1200,6 @@ def test_the_first_send_uses_the_load_and_later_ones_reload_first(_session):
 @patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
 def test_a_reload_leaves_mongoose_open(_session):
     controller, sent = _send_controller(), []
-    controller._roster_used = True
 
     _send_clicked(controller, sent)
 
@@ -1194,7 +1213,6 @@ def test_a_reload_leaves_mongoose_open(_session):
 @patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
 def test_a_failed_reload_lets_the_professor_choose(_session, choice, expected_sent, expected_tries):
     controller, sent = _send_controller(), []
-    controller._roster_used = True
     controller.student_data_provider.refresh.side_effect = RuntimeError("Salesforce is down")
 
     with patch("src.controllers.app_controller.messagebox.askyesnocancel", return_value=choice):
@@ -1207,7 +1225,6 @@ def test_a_failed_reload_lets_the_professor_choose(_session, choice, expected_se
 @patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
 def test_try_again_reloads_again_and_then_sends(_session):
     controller, sent = _send_controller(), []
-    controller._roster_used = True
     controller.student_data_provider.refresh.side_effect = [RuntimeError("Salesforce is down"), ["student"]]
 
     with patch("src.controllers.app_controller.messagebox.askyesnocancel", return_value=True):
@@ -1256,3 +1273,18 @@ def test_nothing_shows_once_the_app_is_set_up(mock_box, mock_window):
 
     mock_window.assert_not_called()
     mock_box.showwarning.assert_not_called()
+
+
+@patch("controllers.app_controller.MultiReviewSendModal")
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_the_real_welcome_button_reloads_an_old_roster(_session, mock_review):
+    controller = _send_controller(minutes_old=30)
+    controller.action_repo = MagicMock()
+    controller.action_repo.load_actions.return_value = []
+    controller.groups = []
+    controller.right_workspace = MagicMock()
+
+    controller.handle_send_welcome_emails()
+
+    controller.student_data_provider.refresh.assert_called_once()
+    mock_review.assert_called_once()

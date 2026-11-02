@@ -65,18 +65,22 @@ FIRST_STEPS_TEXT = (  # the developer's wording
 )
 
 
+ROSTER_MAX_AGE_SECONDS = 5 * 60
+
+
 def _with_fresh_roster(handler):
-    """Wraps a send that reads the roster. The first send after a load uses
-    that load; a later one reloads first, since any filtered field may have
+    """Wraps a send that reads the roster. A roster older than
+    ROSTER_MAX_AGE_SECONDS reloads first, since any filtered field may have
     changed (developer, 2026-11-02). Send Task Emails isn't wrapped: passed
     tasks are a once-a-day check."""
     @wraps(handler)
     def wrapper(self, *args, **kwargs):
-        if self._roster_used is True and getattr(self.student_data_provider, "is_loaded", True):
+        loaded_at = self._roster_loaded_at
+        stale = isinstance(loaded_at, float) and time.time() - loaded_at > ROSTER_MAX_AGE_SECONDS
+        if stale and getattr(self.student_data_provider, "is_loaded", True):
             if not self._is_busy_and_told_user():
                 self._reload_roster_then(lambda: handler(self, *args, **kwargs))
             return None
-        self._roster_used = True
         return handler(self, *args, **kwargs)
     return wrapper
 
@@ -111,7 +115,7 @@ class AppController:
     # only so tests can point them elsewhere.
     LOG_DIR = None
     TEST_MODE_FILE = None
-    _roster_used = False  # True once a send has used the current roster load
+    _roster_loaded_at: Optional[float] = None  # time.time() of the last successful load
     _loading_view: Optional[LoadingView] = None  # set only while startup loads
 
     # region Initialization
@@ -379,12 +383,14 @@ class AppController:
             self._log_in_to_salesforce()
         self._set_loading_status(LOADING_CASELOAD_TEXT)
         try:
-            return self.student_data_provider.refresh()
+            students = self.student_data_provider.refresh()
         except salesforce_browser_session.SessionExpiredError:
             self.activity_logger.log("Salesforce login expired - asking to log in again")
             salesforce_browser_session.clear_session()
             self._log_in_to_salesforce()
-            return self.student_data_provider.refresh()
+            students = self.student_data_provider.refresh()
+        self._roster_loaded_at = time.time()
+        return students
 
     # region View Management
     def _init_views(self) -> None:
@@ -542,7 +548,6 @@ class AppController:
         Nothing sends until the professor confirms the review window."""
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
-        self._roster_used = True
         days = parse_look_back_days(days_text)
         if days is None:
             messagebox.showwarning(
@@ -1400,7 +1405,9 @@ class AppController:
         unless a login is needed: its window locks the Edge profile that uses."""
         try:
             if salesforce_browser_session.has_session():
-                return self.student_data_provider.refresh()
+                students = self.student_data_provider.refresh()
+                self._roster_loaded_at = time.time()
+                return students
         except salesforce_browser_session.SessionExpiredError:
             self.activity_logger.log("Salesforce login expired - asking to log in again")
             salesforce_browser_session.clear_session()
@@ -1466,7 +1473,6 @@ class AppController:
         self.activity_logger.log("Refresh Caseload clicked")
 
         def _done(students):
-            self._roster_used = False
             self.activity_logger.diagnostics.set_roster(students)
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
             self._log_contact_id_report()
