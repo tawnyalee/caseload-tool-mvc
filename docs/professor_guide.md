@@ -136,6 +136,7 @@ The day's log is a backup if you close that window by accident (see "Your data a
 Texting is **new and still being tested**. When an Action has **Send Text** checked, the app schedules each text in **Mongoose**:
 
 - A Mongoose window opens with the first text and stays open while the app is open, so you only log in when Mongoose asks. It closes with the app, or when you click **↻ Refresh Caseload**.
+- You don't need to refresh before sending. The first send after the caseload loads uses that load. After that, Welcome Emails, single Actions, batches and Send Email to All Students reload the caseload first. **🎯 Send Task Emails** doesn't reload, since it's a once-a-day check. If a reload fails, you can try again, continue with the older roster, or cancel.
 - Each text goes out from the **department matching the student's course** (for example D424), so it lands in the right shared inbox.
 - Each one is **scheduled**, never sent instantly: for the next time between **10 AM and 8 PM in the student's own time zone**.
 - **For now, you finish each text yourself.** Mongoose comes to the front and the progress window says "Waiting for you". The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.

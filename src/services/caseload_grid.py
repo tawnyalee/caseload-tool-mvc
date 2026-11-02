@@ -91,6 +91,14 @@ class GridCapture:
                 result[student_id] = contact_id
         return result
 
+    def course_record_id(self, student_id: str, course_code: str) -> str:
+        """The id of this student's record in this course ("a6d..."), which a
+        direct follow-up save needs. Only that exact course: a student's other
+        course must never get this note."""
+        row = self.rows_by_key.get((student_id.strip(), course_code.strip())) or {}
+        record_id = str(row.get("StudentAcademicCourseId") or "").strip()
+        return record_id if record_id.startswith("a6d") else ""
+
 
 @dataclass
 class ContactIdReport:
@@ -100,6 +108,7 @@ class ContactIdReport:
     grid_rows: int
     expected_grid_rows: Optional[int]
     missing_names: List[str] = field(default_factory=list)
+    with_course_record_id: Optional[int] = None
 
     @property
     def grid_incomplete(self) -> bool:
@@ -107,6 +116,8 @@ class ContactIdReport:
 
     def log_lines(self) -> List[str]:
         lines = [f"Texting IDs found for {self.with_contact_id} of {self.students} students"]
+        if self.with_course_record_id is not None:
+            lines.append(f"Course record IDs found for {self.with_course_record_id} of {self.students} students")
         if self.grid_incomplete:
             expected = "an unknown number of" if self.expected_grid_rows is None else str(self.expected_grid_rows)
             lines.append(
@@ -125,6 +136,7 @@ def apply_contact_ids(students, grid: GridCapture) -> ContactIdReport:
     missing = []
     for student in students:
         student.texting_contact_id = contact_ids.get(student.salesforce_id, "")
+        student.course_record_id = grid.course_record_id(student.salesforce_id, student.course_code)
         if not student.texting_contact_id:
             missing.append(student.full_name)
     return ContactIdReport(
@@ -133,4 +145,5 @@ def apply_contact_ids(students, grid: GridCapture) -> ContactIdReport:
         grid_rows=len(grid.rows_by_key),
         expected_grid_rows=grid.expected_total,
         missing_names=sorted(set(missing)),
+        with_course_record_id=sum(1 for student in students if student.course_record_id),
     )

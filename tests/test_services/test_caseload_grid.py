@@ -64,6 +64,7 @@ def test_apply_sets_each_students_texting_id_and_names_who_is_missing():
     assert not report.grid_incomplete
     assert report.log_lines() == [
         "Texting IDs found for 1 of 2 students",
+        "Course record IDs found for 0 of 2 students",
         "No texting ID (texts to them will be skipped): John Roe",
     ]
 

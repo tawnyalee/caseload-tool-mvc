@@ -15,6 +15,7 @@ from src.services.salesforce_browser_session import (
     looks_like_a_different_host,
     open_authenticated_context,
 )
+from src.services.salesforce_direct_save import AuraCredentials, DirectSaveFailed, save_follow_up, save_note
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
 # 30 seconds: Salesforce can be very slow, and a note must not fail for that
 # (developer, 2026-11-01).
 NOTE_STEP_TIMEOUT_MS = 2 * 60 * 1000
+# How long a loaded page gets to make the request that direct saves read their
+# credentials from.
+CREDENTIALS_WAIT_CHECKS = 120  # 30 seconds, at 250 ms each
 
 
 class NoteWriter(ABC):
@@ -110,11 +114,20 @@ class PlaywrightNoteWriter(NoteWriter):
         write_note_fn: "Callable[[Page, str, str, str, str], None]",
         update_follow_up_fn: "Callable[[Page, str, str], None]",
         headless: bool = True,
+        find_students: Optional[Callable[[str], list]] = None,
+        log: Optional[Callable[[str], None]] = None,
     ):
+        """`find_students(salesforce_id)` gives that ID's roster rows, which
+        hold what a direct save needs. Without it, every note uses the form."""
         self.student_record_url_template = student_record_url_template
         self.write_note_fn = write_note_fn
         self.update_follow_up_fn = update_follow_up_fn
         self.headless = headless
+        self.find_students = find_students
+        self.log = log or (lambda message: None)
+        self._aura = AuraCredentials()
+        self._note_course = {}  # salesforce_id -> the course its note just used
+        self._how_saved = []  # "direct"/"form" per step, for the log
         self._in_run = False
         self._playwright = None
         self._context = None
@@ -134,7 +147,12 @@ class PlaywrightNoteWriter(NoteWriter):
         Each new student also gets a freshly loaded page. Reusing it failed
         about every second note in a live run (2026-10-31): the previous
         student's note form was likely still there, hidden, and the clicks
-        landed on it. One student's note and follow-up do share a page."""
+        landed on it. One student's note and follow-up do share a page.
+
+        Notes and follow-ups try a direct save first (salesforce_direct_save.py),
+        which needs the page loaded once but no reload per student and no form.
+        Anything but a clear success falls back to the form (developer,
+        2026-11-02), so a Salesforce change costs speed, not the note."""
         self._in_run = True
         self._reload_before_next_note = self._page is not None
 
@@ -156,10 +174,13 @@ class PlaywrightNoteWriter(NoteWriter):
             except Exception:
                 pass
         self._playwright = self._context = self._page = self._page_student = None
+        self._aura = AuraCredentials()
 
-    def _open_shared_page(self, salesforce_id: str) -> "Page":
+    def _open_shared_page(self, salesforce_id: str, for_the_form: bool = True) -> "Page":
+        """`for_the_form` False is a direct save: it doesn't touch the page's
+        form, so a new student needs no reload."""
         url = self.student_record_url_template.format(salesforce_id=salesforce_id)
-        new_student = salesforce_id != self._page_student
+        new_student = for_the_form and salesforce_id != self._page_student
         if self._page is not None and (self._reload_before_next_note or new_student):
             self._reload_before_next_note = False
             try:
@@ -172,9 +193,11 @@ class PlaywrightNoteWriter(NoteWriter):
             self._playwright = acquire_playwright()
             self._context = open_authenticated_context(self._playwright, headless=self.headless)
             self._context.set_default_timeout(NOTE_STEP_TIMEOUT_MS)
+            self._context.on("request", self._aura.on_request)
             self._page = self._context.new_page()
             self._go_to(url)
-        self._page_student = salesforce_id
+        if for_the_form:
+            self._page_student = salesforce_id
         return self._page
 
     def _go_to(self, url: str) -> None:
@@ -192,10 +215,66 @@ class PlaywrightNoteWriter(NoteWriter):
             raise
 
     def write_note(self, salesforce_id: str, subject: str, body: str, course_code: str = "") -> None:
+        self._note_course[salesforce_id] = course_code
+        contact_id = next((s.texting_contact_id for s in self._roster_rows(salesforce_id) if s.texting_contact_id), "")
+        if contact_id and course_code and self._saved_directly(
+            salesforce_id, lambda page: save_note(page, self._aura, contact_id, course_code, subject, body)
+        ):
+            return
         self._run(salesforce_id, lambda page: self.write_note_fn(page, salesforce_id, subject, body, course_code))
+        self._how_saved.append("form")
 
     def update_follow_up_note(self, salesforce_id: str, text: str) -> None:
+        record_id = self._course_record_id(salesforce_id)
+        if record_id and self._saved_directly(
+            salesforce_id, lambda page: save_follow_up(page, self._aura, record_id, text)
+        ):
+            return
         self._run(salesforce_id, lambda page: self.update_follow_up_fn(page, salesforce_id, text))
+        self._how_saved.append("form")
+
+    def describe_written(self, student_name: str) -> str:
+        how, self._how_saved = " then ".join(self._how_saved), []
+        return f"Written for {student_name} ({how})" if how else f"Written for {student_name}"
+
+    def _roster_rows(self, salesforce_id: str) -> list:
+        if self.find_students is None or not self._in_run:
+            return []
+        try:
+            return list(self.find_students(salesforce_id))
+        except Exception:
+            return []
+
+    def _course_record_id(self, salesforce_id: str) -> str:
+        """The record for the course the student's note just used. With no
+        note, only a student with a single course: never guess between two."""
+        rows = self._roster_rows(salesforce_id)
+        course = self._note_course.get(salesforce_id, "").strip().upper()
+        if course:
+            rows = [s for s in rows if s.course_code.strip().upper() == course]
+        return rows[0].course_record_id if len(rows) == 1 else ""
+
+    def _saved_directly(self, salesforce_id: str, save: "Callable[[Page], None]") -> bool:
+        """False means the form should be used instead. An expired login is
+        the one thing it doesn't hide, since the form couldn't work either."""
+        try:
+            page = self._open_shared_page(salesforce_id, for_the_form=False)
+            self._wait_for_credentials(page)
+            save(page)
+        except SessionExpiredError:
+            raise
+        except Exception as exc:
+            self.log(f"[NOTE] Direct save didn't work, using the form: {exc}")
+            return False
+        self._how_saved.append("direct")
+        return True
+
+    def _wait_for_credentials(self, page: "Page") -> None:
+        for _ in range(CREDENTIALS_WAIT_CHECKS):
+            if self._aura.ready:
+                return
+            page.wait_for_timeout(250)
+        raise DirectSaveFailed("the page never made a request to read its credentials from")
 
     def _run(self, salesforce_id: str, action: "Callable[[Page], None]") -> None:
         if self._in_run:

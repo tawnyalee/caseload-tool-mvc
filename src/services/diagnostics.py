@@ -39,7 +39,7 @@ _START = r"(?<![^\W_])"
 _END = r"(?![^\W_])"
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
-_CONTACT_ID = re.compile(rf"{_START}003[A-Za-z0-9]{{12,15}}{_END}")
+_CONTACT_ID = re.compile(rf"{_START}(?:003|a6d)[A-Za-z0-9]{{12,15}}{_END}")
 _PHONE = re.compile(rf"\(?{_START}\d{{3}}\)?[-.\s]\d{{3}}[-.\s]\d{{4}}{_END}")
 _LONG_NUMBER = re.compile(rf"{_START}\d{{6,}}{_END}")
 
@@ -146,6 +146,7 @@ class Diagnostics:
             for value in (
                 getattr(s, "full_name", ""), getattr(s, "first_name", ""), getattr(s, "last_name", ""),
                 getattr(s, "salesforce_id", ""), getattr(s, "texting_contact_id", ""),
+                getattr(s, "course_record_id", ""),
                 getattr(s, "email", ""), getattr(s, "phone", ""),
             ):
                 value = (value or "").strip()

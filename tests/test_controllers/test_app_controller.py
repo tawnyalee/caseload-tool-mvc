@@ -1143,3 +1143,75 @@ def test_task_email_actions_review_only_the_student_list(mock_modal, mock_showin
 
     _, run_kwargs = controller.action_runner.run.call_args
     assert run_kwargs["email_subject_override"] is None and run_kwargs["email_body_override"] is None
+
+
+# --- reloading the roster before a send ---------------------------------------
+
+def _send_controller():
+    controller = AppController.__new__(AppController)
+    _runs_synchronously(controller)
+    controller.student_data_provider = MagicMock(is_loaded=True)
+    controller.student_data_provider.refresh.return_value = ["student"]
+    controller.activity_logger = MagicMock()
+    controller.text_sender = MagicMock()
+    controller.note_writer = MagicMock()
+    return controller
+
+
+def _send_clicked(controller, sent):
+    """The same wrapper the real send handlers use."""
+    from controllers.app_controller import _with_fresh_roster
+
+    _with_fresh_roster(lambda self: sent.append("sent"))(controller)
+
+
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_the_first_send_uses_the_load_and_later_ones_reload_first(_session):
+    controller, sent = _send_controller(), []
+
+    _send_clicked(controller, sent)
+    controller.student_data_provider.refresh.assert_not_called()
+
+    _send_clicked(controller, sent)
+    controller.student_data_provider.refresh.assert_called_once()
+    assert sent == ["sent", "sent"]
+
+
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_a_reload_leaves_mongoose_open(_session):
+    controller, sent = _send_controller(), []
+    controller._roster_used = True
+
+    _send_clicked(controller, sent)
+
+    controller.text_sender.close.assert_not_called()
+
+
+@pytest.mark.parametrize("choice,expected_sent,expected_tries", [
+    (None, [], 1),          # Cancel
+    (False, ["sent"], 1),   # continue with the older roster
+])
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_a_failed_reload_lets_the_professor_choose(_session, choice, expected_sent, expected_tries):
+    controller, sent = _send_controller(), []
+    controller._roster_used = True
+    controller.student_data_provider.refresh.side_effect = RuntimeError("Salesforce is down")
+
+    with patch("src.controllers.app_controller.messagebox.askyesnocancel", return_value=choice):
+        _send_clicked(controller, sent)
+
+    assert sent == expected_sent
+    assert controller.student_data_provider.refresh.call_count == expected_tries
+
+
+@patch("src.controllers.app_controller.salesforce_browser_session.has_session", return_value=True)
+def test_try_again_reloads_again_and_then_sends(_session):
+    controller, sent = _send_controller(), []
+    controller._roster_used = True
+    controller.student_data_provider.refresh.side_effect = [RuntimeError("Salesforce is down"), ["student"]]
+
+    with patch("src.controllers.app_controller.messagebox.askyesnocancel", return_value=True):
+        _send_clicked(controller, sent)
+
+    assert sent == ["sent"]
+    assert controller.student_data_provider.refresh.call_count == 2

@@ -91,6 +91,10 @@ class Student:
     # Caseload page's own grid data - it isn't in the CSV export, so it's not
     # in SALESFORCE_FIELD_MAP either. Blank = not known; texting skips them.
     texting_contact_id: str = ""
+    # This student's record in this course. Today it's Salesforce's
+    # StudentAcademicCourseId ("a6d..."), read from the same grid data. Blank =
+    # not known; a follow-up note then goes through the form.
+    course_record_id: str = ""
 
     # snake_case attribute name -> raw column name from the caseload export
     # (which mirrors the underlying Salesforce field/API names). Kept so a

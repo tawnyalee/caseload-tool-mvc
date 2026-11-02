@@ -1,4 +1,5 @@
 import threading
+from functools import wraps
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -48,6 +49,22 @@ from src.views.settings_view import SettingsView
 from src.services.run_report import batch_issue_lines, issue_lines
 
 
+def _with_fresh_roster(handler):
+    """Wraps a send that reads the roster. The first send after a load uses
+    that load; a later one reloads first, since any filtered field may have
+    changed (developer, 2026-11-02). Send Task Emails isn't wrapped: passed
+    tasks are a once-a-day check."""
+    @wraps(handler)
+    def wrapper(self, *args, **kwargs):
+        if self._roster_used is True and getattr(self.student_data_provider, "is_loaded", True):
+            if not self._is_busy_and_told_user():
+                self._reload_roster_then(lambda: handler(self, *args, **kwargs))
+            return None
+        self._roster_used = True
+        return handler(self, *args, **kwargs)
+    return wrapper
+
+
 def _show_run_results(master, clean_title: str, issues_title: str, message: str, lines: List[str]) -> None:
     """End-of-run results: a plain info popup for a clean run, otherwise
     the scrollable RunSummaryModal listing every failed/skipped step by
@@ -78,6 +95,7 @@ class AppController:
     # only so tests can point them elsewhere.
     LOG_DIR = None
     TEST_MODE_FILE = None
+    _roster_used = False  # True once a send has used the current roster load
     _loading_view: Optional[LoadingView] = None  # set only while startup loads
 
     # region Initialization
@@ -159,6 +177,10 @@ class AppController:
             student_record_url_template=CASELOAD_APP_URL,
             write_note_fn=write_note_fn,
             update_follow_up_fn=update_follow_up_fn,
+            find_students=lambda salesforce_id: [
+                s for s in self.student_data_provider.get_students() if s.salesforce_id == salesforce_id
+            ],
+            log=self.activity_logger.log,
         )
         self.activity_logger.diagnostics.header(test_mode=self.test_mode)
         if self.test_mode:
@@ -491,6 +513,7 @@ class AppController:
         Nothing sends until the professor confirms the review window."""
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
+        self._roster_used = True
         days = parse_look_back_days(days_text)
         if days is None:
             messagebox.showwarning(
@@ -574,6 +597,7 @@ class AppController:
             on_confirm=_on_confirm,
         )
 
+    @_with_fresh_roster
     def handle_send_welcome_emails(self) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
@@ -621,6 +645,7 @@ class AppController:
             on_confirm=_on_confirm,
         )
 
+    @_with_fresh_roster
     def handle_send_ad_hoc_email(
         self,
         subject: str,
@@ -697,6 +722,7 @@ class AppController:
     def _handle_delete_batch(self, batch_id: str) -> None:
         self.saved_batch_repo.delete_batch(batch_id)
 
+    @_with_fresh_roster
     def _handle_run_batch(self, actions, group_names) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
@@ -792,6 +818,7 @@ class AppController:
     def handle_help_requested(self) -> None:
         self.switch_workspace_view(HelpView)  # the professor guide - see help_view.py
 
+    @_with_fresh_roster
     def handle_run_action(self, action_name: str) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
@@ -1339,6 +1366,49 @@ class AppController:
         self._close_session_browsers()
         return self._load_caseload_logging_in_if_needed()
 
+    def _reload_roster_keeping_browsers(self):
+        """Runs on the background thread. Mongoose stays open and signed in,
+        unless a login is needed: its window locks the Edge profile that uses."""
+        try:
+            if salesforce_browser_session.has_session():
+                return self.student_data_provider.refresh()
+        except salesforce_browser_session.SessionExpiredError:
+            self.activity_logger.log("Salesforce login expired - asking to log in again")
+            salesforce_browser_session.clear_session()
+        self._close_session_browsers()
+        return self._load_caseload_logging_in_if_needed()
+
+    def _reload_roster_then(self, proceed: Callable[[], None]) -> None:
+        """Reloads the roster, then calls proceed. If that fails the professor
+        chooses (developer, 2026-11-02): try again, use the older roster, or
+        cancel."""
+        def _done(students):
+            self.activity_logger.diagnostics.set_roster(students)
+            self.activity_logger.log(f"Caseload reloaded before this send: {len(students)} students")
+            self._log_contact_id_report()
+            proceed()
+
+        def _failed(exc):
+            choice = messagebox.askyesnocancel(
+                "Couldn't reload the caseload",
+                f"The caseload couldn't be reloaded:\n\n{exc}\n\n"
+                "Yes: try again\n"
+                "No: continue with the older roster\n"
+                "Cancel: don't send anything",
+            )
+            if choice:
+                self._reload_roster_then(proceed)
+            elif choice is False:
+                self.activity_logger.log("[USER] Continued with the older roster after a failed reload")
+                proceed()
+
+        self._run_in_background(
+            "Refreshing Caseload",
+            lambda control: self._reload_roster_keeping_browsers(),
+            on_finished=_done, on_failed=_failed, stoppable=False,
+            status="Reloading the caseload from Salesforce… (a login window may open)",
+        )
+
     def _close_session_browsers(self) -> None:
         """The notes page is showing the old caseload, and Mongoose's window
         would lock the Edge profile a new Salesforce login needs."""
@@ -1367,6 +1437,7 @@ class AppController:
         self.activity_logger.log("Refresh Caseload clicked")
 
         def _done(students):
+            self._roster_used = False
             self.activity_logger.diagnostics.set_roster(students)
             self.activity_logger.log(f"Caseload refreshed: {len(students)} students")
             self._log_contact_id_report()
