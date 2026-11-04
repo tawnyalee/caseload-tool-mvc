@@ -201,6 +201,7 @@ class AppController:
                 s for s in self.student_data_provider.get_students() if s.salesforce_id == salesforce_id
             ],
             log=self.activity_logger.log,
+            use_direct_saves=lambda: self.app_settings.use_direct_saves,
         )
         self.activity_logger.diagnostics.header(test_mode=self.test_mode)
         if self.test_mode:
@@ -821,6 +822,8 @@ class AppController:
             signature_names=self.signature_provider.get_signature_names(),
             default_signature=self.default_signature,
             on_save_signature=self.app_settings.save_default_signature,
+            use_direct_saves=self.app_settings.use_direct_saves,
+            on_save_direct_saves=self.app_settings.save_use_direct_saves,
             save_template=self.save_template,
             get_template=self.template_repo.get_by_id,
         )

@@ -360,3 +360,16 @@ def test_preview_shows_a_welcome_actions_filled_in_email_and_text():
     preview = runner.preview_for(action, _student())
 
     assert preview == "Subject: Welcome, Jane\n\nHere are the Task 3 tips.\n\nText: Hi Jane"
+
+
+def test_direct_saves_are_on_until_turned_off_and_survive_reloading(tmp_path):
+    path = str(tmp_path / "app_settings.json")
+    settings = AppSettingsRepository(path)
+    assert settings.use_direct_saves is True
+
+    settings.save_default_signature("Mine")
+    settings.save_use_direct_saves(False)
+
+    reloaded = AppSettingsRepository(path)
+    assert reloaded.use_direct_saves is False
+    assert reloaded.default_signature == "Mine"

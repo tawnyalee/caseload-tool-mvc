@@ -210,6 +210,8 @@ class SettingsView(ctk.CTkFrame):
         load_templates: Optional[Callable[[], List[Tuple[str, str]]]] = None,
         signature_names: Optional[List[str]] = None, default_signature: str = "",
         on_save_signature: Optional[Callable[[str], None]] = None,
+        use_direct_saves: bool = True,
+        on_save_direct_saves: Optional[Callable[[bool], None]] = None,
         save_template: Optional[Callable[[Optional[str], str, str], str]] = None,
         get_template: Optional[Callable] = None,
         **kwargs,
@@ -224,6 +226,7 @@ class SettingsView(ctk.CTkFrame):
         self.on_save = on_save
         self.load_templates = load_templates
         self.on_save_signature = on_save_signature
+        self.on_save_direct_saves = on_save_direct_saves
         self.save_template = save_template
         self.get_template = get_template
         templates = load_templates() if load_templates else (templates or [])
@@ -257,6 +260,17 @@ class SettingsView(ctk.CTkFrame):
         )
         self.signature_dropdown.set(default_signature or NO_DEFAULT_SIGNATURE)
         self.signature_dropdown.pack(anchor="w", padx=10, pady=(4, 6))
+
+        self.direct_saves_var = ctk.StringVar(value="on" if use_direct_saves else "off")
+        ctk.CTkCheckBox(
+            self, text="Save notes directly to Salesforce (faster)", variable=self.direct_saves_var,
+            onvalue="on", offvalue="off",
+        ).pack(anchor="w", padx=10, pady=(4, 0))
+        ctk.CTkLabel(
+            self, text="Unticked, notes and follow-ups use Salesforce's note form. That works the same, but takes "
+                       "about 30 seconds or more per student. Applies to this computer only.",
+            text_color=("gray35", "gray65"), wraplength=420, justify="left",
+        ).pack(anchor="w", padx=10, pady=(0, 6))
 
         ctk.CTkLabel(self, text="Courses", font=ctk.CTkFont(size=15, weight="bold")).pack(anchor="w", padx=10, pady=(8, 0))
         ctk.CTkLabel(
@@ -302,6 +316,8 @@ class SettingsView(ctk.CTkFrame):
         if self.on_save_signature:
             choice = self.signature_dropdown.get()
             self.on_save_signature("" if choice == NO_DEFAULT_SIGNATURE else choice)
+        if self.on_save_direct_saves:
+            self.on_save_direct_saves(self.direct_saves_var.get() == "on")
         values = {card.group.id: card.read() for card in self.cards}
         problems = [p for v in values.values() for p in v["problems"]]
         self.problems_label.configure(text="\n".join(problems))

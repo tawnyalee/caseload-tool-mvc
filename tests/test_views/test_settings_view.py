@@ -190,3 +190,18 @@ def test_changing_the_task_count_rebuilds_rows_and_keeps_what_was_chosen(ctk_roo
         assert card._email_widgets[1].get() == "Task 2 tips"
     finally:
         view.destroy()
+
+
+def test_the_direct_saves_box_shows_the_setting_and_saves_it(ctk_root):
+    chosen = []
+    view = SettingsView(
+        ctk_root, groups=[], on_save=lambda *_: None, use_direct_saves=True, on_save_direct_saves=chosen.append,
+    )
+    try:
+        assert view.direct_saves_var.get() == "on"
+        view.save()
+        view.direct_saves_var.set("off")
+        view.save()
+        assert chosen == [True, False]
+    finally:
+        view.destroy()

@@ -229,3 +229,19 @@ def test_each_student_gets_the_record_id_for_their_own_course():
 def test_course_record_ids_are_scrubbed_from_the_diagnostics_log(tmp_path):
     diag = Diagnostics(tmp_path)
     assert diag.scrub("record a6d000000000001AAA") == "record [contact-id]"
+
+
+def test_turning_direct_saves_off_uses_the_form_for_everything(monkeypatch):
+    writer, page, logged = _writer(monkeypatch, [_student()])
+    writer.use_direct_saves = lambda: False
+
+    writer.start_run()
+    writer.write_note("S1", "Subject", "Body", "D424")
+    writer.update_follow_up_note("S1", "Welcome Email")
+    writer.finish_run()
+
+    page.evaluate.assert_not_called()
+    writer.write_note_fn.assert_called_once()
+    writer.update_follow_up_fn.assert_called_once()
+    assert logged == []
+    assert writer.describe_written("Jane") == "Written for Jane (form then form)"

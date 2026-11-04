@@ -116,15 +116,19 @@ class PlaywrightNoteWriter(NoteWriter):
         headless: bool = True,
         find_students: Optional[Callable[[str], list]] = None,
         log: Optional[Callable[[str], None]] = None,
+        use_direct_saves: Callable[[], bool] = lambda: True,
     ):
         """`find_students(salesforce_id)` gives that ID's roster rows, which
-        hold what a direct save needs. Without it, every note uses the form."""
+        hold what a direct save needs. Without it, every note uses the form.
+        `use_direct_saves()` is the Settings checkbox, read before each step
+        so a change applies to the next note."""
         self.student_record_url_template = student_record_url_template
         self.write_note_fn = write_note_fn
         self.update_follow_up_fn = update_follow_up_fn
         self.headless = headless
         self.find_students = find_students
         self.log = log or (lambda message: None)
+        self.use_direct_saves = use_direct_saves
         self._aura = AuraCredentials()
         self._note_course = {}  # salesforce_id -> the course its note just used
         self._how_saved = []  # "direct"/"form" per step, for the log
@@ -257,6 +261,8 @@ class PlaywrightNoteWriter(NoteWriter):
     def _saved_directly(self, salesforce_id: str, save: "Callable[[Page], None]") -> bool:
         """False means the form should be used instead. An expired login is
         the one thing it doesn't hide, since the form couldn't work either."""
+        if not self.use_direct_saves():
+            return False
         try:
             page = self._open_shared_page(salesforce_id, for_the_form=False)
             self._wait_for_credentials(page)
