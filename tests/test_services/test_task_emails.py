@@ -373,3 +373,52 @@ def test_direct_saves_are_on_until_turned_off_and_survive_reloading(tmp_path):
     reloaded = AppSettingsRepository(path)
     assert reloaded.use_direct_saves is False
     assert reloaded.default_signature == "Mine"
+
+
+# --- courses whose tasks can be done in any order ------------------------------
+
+def _any_order_course(**fields):
+    return _course(sequential_tasks=False, task_count=3, task_emails={"support1": {"template_id": "T3"}}, **fields)
+
+
+def test_any_order_sends_the_lowest_task_not_yet_submitted():
+    student = _student(task_1="", task_2="", task_3="2026-11-01 (1)", latest_task_number=3)
+
+    email = build_task_email(student, _any_order_course(), _template)
+
+    assert email.passed_task == 3
+    assert email.subject == "Task 1 Support"
+    assert email.body.startswith("<p>Hello Jane,</p>")
+    assert email.problem == ""
+
+
+def test_any_order_counts_any_value_as_submitted():
+    student = _student(task_1="2026-10-01 (0)", task_2="", task_3="2026-11-01 (1)", latest_task_number=3)
+
+    email = build_task_email(student, _any_order_course(), _template)
+
+    assert email.subject == "Task 2 Support"
+    assert "No task email set up for D424 Task 2 Support" in email.problem
+
+
+def test_any_order_skips_a_student_who_submitted_every_task():
+    student = _student(task_1="2026-10-01 (0)", task_2="2026-11-01 (1)", task_3="2026-10-28 (0)")
+
+    assert build_task_email(student, _any_order_course(), _template) is None
+
+
+def test_in_order_courses_work_as_before():
+    email = build_task_email(_student(), _course(), _template)
+    assert email.subject == "Task 3 Support" and email.problem == ""
+
+
+def test_each_kind_of_course_keeps_its_own_emails():
+    course = _course(task_count=3, task_emails={"2": {"template_id": "A"}, "support2": {"template_id": "B"}})
+    assert course.task_email_rows() == [1, 2]
+    assert course.task_email_for(2)["template_id"] == "A"
+
+    course.sequential_tasks = False
+
+    assert course.task_email_rows() == [1, 2, 3]
+    assert course.support_email_for(2)["template_id"] == "B"
+    assert course.task_email_for(2) is None

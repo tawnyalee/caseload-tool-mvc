@@ -41,7 +41,8 @@ def test_saving_returns_settings_by_group_id_with_tasks_and_oa_together(ctk_root
         card.has_oa_var.set("on")
         assert view.save() is True
         assert saved == [{"G1": {"is_course": True, "course_code": "D424", "has_tasks": True,
-                                 "task_count": 4, "has_objective_assessment": True, "task_emails": {}}}]
+                                 "task_count": 4, "has_objective_assessment": True, "task_emails": {},
+                                 "sequential_tasks": True}}]
     finally:
         view.destroy()
 
@@ -203,5 +204,24 @@ def test_the_direct_saves_box_shows_the_setting_and_saves_it(ctk_root):
         view.direct_saves_var.set("off")
         view.save()
         assert chosen == [True, False]
+    finally:
+        view.destroy()
+
+
+def test_an_any_order_course_shows_task_support_rows_and_saves_the_choice(ctk_root):
+    saved = []
+    course = Group(name="D370", is_course=True, course_code="D370", has_tasks=True, task_count=3)
+    view = SettingsView(ctk_root, groups=[course], on_save=lambda values, _problems: saved.append(values))
+    try:
+        card = view.cards[0]
+        assert card.sequential_var.get() == "on"
+        assert sorted(card._email_widgets) == [1, 2]
+
+        card.sequential_var.set("off")
+        card._refresh_enabled()
+        assert sorted(card._email_widgets) == [1, 2, 3]
+
+        view.save()
+        assert saved[0][course.id]["sequential_tasks"] is False
     finally:
         view.destroy()

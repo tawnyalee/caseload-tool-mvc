@@ -8,7 +8,9 @@ is involved. The app writes the wording around it:
   - the Salesforce note's body: the text of the email that was sent
 
 A student who already submitted the next task gets a short congratulations
-instead. The follow-up note is also how a repeat run knows who's been done.
+instead. A course whose tasks can be done in any order (Group.sequential_tasks
+off) sends the lowest task not yet submitted, and nothing at all when every
+task has been submitted (developer, 2026-11-05). The follow-up note is also how a repeat run knows who's been done.
 OAs are left out for now: Salesforce only shows an OA pass in its essential
 actions list.
 """
@@ -106,7 +108,11 @@ def build_task_email(student: Student, group: Group, get_template: Callable) -> 
     """The email for a student who passed a task in `group`'s course, or None
     if they passed the last task, since there's nothing next."""
     passed = passed_task_number(student)
-    if passed is None or passed >= group.task_count:
+    if passed is None:
+        return None
+    if not group.sequential_tasks:
+        return _any_order_task_email(student, group, passed, get_template)
+    if passed >= group.task_count:
         return None
     next_task = passed + 1
     name = html.escape(student.first_name)
@@ -129,5 +135,29 @@ def build_task_email(student: Student, group: Group, get_template: Callable) -> 
         task_email.problem = f"The template chosen for {group.course_code} Task {passed} no longer exists (see Settings)"
         return task_email
     task_email.body = f"<p>Hello {name},</p>{template.body}"
+    task_email.email_name = template.name
+    return task_email
+
+
+def _any_order_task_email(student: Student, group: Group, passed: int, get_template: Callable) -> Optional[TaskEmail]:
+    """The lowest task not yet submitted, in a course whose tasks can be done
+    in any order. Any value in a task column counts as submitted, a returned
+    one too. None when every task is submitted."""
+    unsubmitted = [n for n in range(1, group.task_count + 1) if not has_submitted_task(student, n)]
+    if not unsubmitted:
+        return None
+    next_task = unsubmitted[0]
+    task_email = TaskEmail(student, group, passed, subject=support_label(next_task))
+    email = group.support_email_for(next_task)
+    if email is None:
+        task_email.problem = f"No task email set up for {group.course_code} Task {next_task} Support (see Settings)"
+        return task_email
+    template = get_template(email["template_id"])
+    if template is None:
+        task_email.problem = (
+            f"The template chosen for {group.course_code} Task {next_task} Support no longer exists (see Settings)"
+        )
+        return task_email
+    task_email.body = f"<p>Hello {html.escape(student.first_name)},</p>{template.body}"
     task_email.email_name = template.name
     return task_email

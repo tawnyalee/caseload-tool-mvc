@@ -842,6 +842,7 @@ class AppController:
             group.task_count = settings["task_count"]
             group.has_objective_assessment = settings["has_objective_assessment"]
             group.task_emails = settings.get("task_emails", group.task_emails)
+            group.sequential_tasks = settings.get("sequential_tasks", group.sequential_tasks)
         self.group_repo.save_groups(self.groups)
         if problems:
             self.activity_logger.log(f"Course settings saved, except: {' '.join(problems)}")

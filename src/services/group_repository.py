@@ -53,6 +53,7 @@ class GroupRepository:
             course_code=course_code,
             task_count=item.get("task_count", 0),
             task_emails=item.get("task_emails", {}),
+            sequential_tasks=item.get("sequential_tasks", True),
         )
 
     def save_groups(self, groups: List[Group]) -> None:
@@ -69,6 +70,7 @@ class GroupRepository:
                 "course_code": g.course_code,
                 "task_count": g.task_count,
                 "task_emails": g.task_emails,
+                "sequential_tasks": g.sequential_tasks,
             }
             for g in groups
         ]

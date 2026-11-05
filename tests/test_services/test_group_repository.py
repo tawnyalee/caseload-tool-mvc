@@ -91,3 +91,20 @@ def test_task_emails_round_trip(tmp_path):
     repo.save_groups([Group(name="D424", is_course=True, course_code="D424", has_tasks=True, task_count=3,
                             task_emails={"1": {"template_id": "T2", "subject": "On to Task 2"}})])
     assert repo.load_groups()[0].task_emails == {"1": {"template_id": "T2", "subject": "On to Task 2"}}
+
+
+def test_sequential_tasks_is_saved_and_defaults_to_on(tmp_path):
+    from src.services.group_repository import GroupRepository
+
+    path = str(tmp_path / "groups.json")
+    repo = GroupRepository(data_file=Path(path))
+    repo.add_group("D370", is_course=True)
+    groups = repo.load_groups()
+    target = next(g for g in groups if g.name == "D370")
+    assert target.sequential_tasks is True
+
+    target.sequential_tasks = False
+    repo.save_groups(groups)
+
+    reloaded = next(g for g in GroupRepository(data_file=Path(path)).load_groups() if g.name == "D370")
+    assert reloaded.sequential_tasks is False

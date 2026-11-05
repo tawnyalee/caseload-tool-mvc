@@ -46,6 +46,7 @@ class _GroupCard(ctk.CTkFrame):
         # What each task row holds, kept across rebuilds (count/OA changes).
         self._email_values: Dict[str, dict] = {k: dict(v) for k, v in group.task_emails.items()}
         self._email_widgets: Dict[int, ctk.CTkOptionMenu] = {}
+        self._widgets_sequential = group.sequential_tasks  # which kind of rows are on screen
 
         ctk.CTkLabel(self, text=group.name, font=ctk.CTkFont(size=14, weight="bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 4)
@@ -75,15 +76,22 @@ class _GroupCard(ctk.CTkFrame):
             self.task_count_entry.insert(0, str(group.task_count))
         self.task_count_entry.grid(row=2, column=2, sticky="w", padx=(0, 12))
 
+        self.sequential_var = ctk.StringVar(value="on" if group.sequential_tasks else "off")
+        self.sequential_box = ctk.CTkCheckBox(
+            self, text="This course requires sequential submission", variable=self.sequential_var,
+            onvalue="on", offvalue="off", command=self._refresh_enabled,
+        )
+        self.sequential_box.grid(row=3, column=0, columnspan=3, sticky="w", padx=52, pady=3)
+
         self.has_oa_var = ctk.StringVar(value="on" if group.has_objective_assessment else "off")
         self.has_oa_box = ctk.CTkCheckBox(
             self, text="Has an objective assessment (OA)", variable=self.has_oa_var,
             onvalue="on", offvalue="off", command=self._refresh_enabled,
         )
-        self.has_oa_box.grid(row=3, column=0, columnspan=3, sticky="w", padx=32, pady=(3, 10))
+        self.has_oa_box.grid(row=4, column=0, columnspan=3, sticky="w", padx=32, pady=(3, 10))
 
         self.emails_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.emails_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=(0, 10))
+        self.emails_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=12, pady=(0, 10))
         self.task_count_entry.bind("<KeyRelease>", lambda _event: self._rebuild_email_rows())
 
         self._refresh_enabled()
@@ -104,7 +112,8 @@ class _GroupCard(ctk.CTkFrame):
 
     def choose_template(self, task_number: int, template_id: str) -> None:
         self._capture_email_rows()
-        row = self._email_values.setdefault(str(task_number), {"subject": DEFAULT_TASK_EMAIL_SUBJECT})
+        key = Group.task_email_key(task_number, self._widgets_sequential)
+        row = self._email_values.setdefault(key, {"subject": DEFAULT_TASK_EMAIL_SUBJECT})
         row["template_id"] = template_id
         self._email_widgets = {}  # so the rebuild keeps this choice, not the old dropdown's
         self._rebuild_email_rows()
@@ -121,6 +130,7 @@ class _GroupCard(ctk.CTkFrame):
             widget.configure(state=course_state)
         tasks_on = is_course and self.has_tasks_var.get() == "on"
         self.task_count_entry.configure(state="normal" if tasks_on else "disabled")
+        self.sequential_box.configure(state="normal" if tasks_on else "disabled")
         self._rebuild_email_rows()
 
     def _current_shape(self) -> Group:
@@ -132,12 +142,14 @@ class _GroupCard(ctk.CTkFrame):
             has_tasks=self.has_tasks_var.get() == "on",
             task_count=int(count_text) if count_text.isdigit() else 0,
             has_objective_assessment=self.has_oa_var.get() == "on",
+            sequential_tasks=self.sequential_var.get() == "on",
         )
 
     def _capture_email_rows(self) -> None:
         for number, dropdown in self._email_widgets.items():
-            saved = self._email_values.get(str(number), {})
-            self._email_values[str(number)] = {
+            key = Group.task_email_key(number, self._widgets_sequential)
+            saved = self._email_values.get(key, {})
+            self._email_values[key] = {
                 "template_id": self._choice_to_id.get(dropdown.get(), ""),
                 "subject": saved.get("subject") or DEFAULT_TASK_EMAIL_SUBJECT,
             }
@@ -147,20 +159,28 @@ class _GroupCard(ctk.CTkFrame):
         for widget in self.emails_frame.winfo_children():
             widget.destroy()
         self._email_widgets = {}
-        rows = self._current_shape().task_email_rows()
+        shape = self._current_shape()
+        sequential = shape.sequential_tasks
+        self._widgets_sequential = sequential
+        rows = shape.task_email_rows()
         if not rows:
             return
 
+        heading = (
+            "Task emails — sent to a student who just passed:" if sequential
+            else "Task emails — tasks can be done in any order, so each student gets the lowest task "
+                 "they haven't submitted:"
+        )
         ctk.CTkLabel(
-            self.emails_frame, text="Task emails — sent to a student who just passed:",
-            font=ctk.CTkFont(weight="bold"),
+            self.emails_frame, text=heading, font=ctk.CTkFont(weight="bold"), wraplength=520, justify="left",
         ).grid(row=0, column=0, columnspan=5, sticky="w", pady=(4, 2))
         choices = [NO_EMAIL] + list(self._choice_to_id)
         for i, number in enumerate(rows, start=1):
-            ctk.CTkLabel(self.emails_frame, text=f"Passed Task {number}").grid(
+            label = f"Passed Task {number}" if sequential else support_label(number)
+            ctk.CTkLabel(self.emails_frame, text=label).grid(
                 row=i, column=0, sticky="w", padx=(10, 6), pady=2
             )
-            saved = self._email_values.get(str(number), {})
+            saved = self._email_values.get(Group.task_email_key(number, sequential), {})
             dropdown = ctk.CTkOptionMenu(self.emails_frame, values=choices, width=135)
             dropdown.set(self._id_to_choice.get(saved.get("template_id", ""), NO_EMAIL))
             dropdown.grid(row=i, column=1, sticky="w", padx=4, pady=2)
@@ -171,7 +191,7 @@ class _GroupCard(ctk.CTkFrame):
                 self.emails_frame, text="✏️ Edit", width=60, command=lambda n=number: self._open_editor(n, False),
             ).grid(row=i, column=3, padx=2, pady=2)
             ctk.CTkLabel(
-                self.emails_frame, text=f"Subject: {support_label(number + 1)}",
+                self.emails_frame, text=f"Subject: {support_label(number + 1 if sequential else number)}",
                 text_color=("gray40", "gray60"),
             ).grid(row=i, column=4, sticky="w", padx=(6, 0), pady=2)
             self._email_widgets[number] = dropdown
@@ -199,6 +219,7 @@ class _GroupCard(ctk.CTkFrame):
             "has_tasks": has_tasks,
             "task_count": task_count if has_tasks else self.group.task_count,
             "has_objective_assessment": is_course and self.has_oa_var.get() == "on",
+            "sequential_tasks": self.sequential_var.get() == "on",
             "problems": problems,
         }
 
