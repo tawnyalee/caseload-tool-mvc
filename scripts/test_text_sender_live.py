@@ -50,7 +50,7 @@ def main() -> None:
             tomorrow_10am = datetime.combine(datetime.now().date() + timedelta(days=1), time(10, 0))
             text = ScheduledText(
                 course_code=course_code,
-                contact_id=contact_id,
+                contact_ids=[contact_id],
                 body="Test from the Caseload tool - please ignore.",
                 message_name="Caseload tool test",
                 send_at=tomorrow_10am,

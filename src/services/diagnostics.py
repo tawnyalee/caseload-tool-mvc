@@ -141,8 +141,9 @@ class Diagnostics:
     def set_roster(self, students: Iterable) -> None:
         """Remembers the current roster's names and IDs so they're scrubbed.
         Called after every roster load."""
+        self._students = list(students)
         terms = set()
-        for s in students:
+        for s in self._students:
             for value in (
                 getattr(s, "full_name", ""), getattr(s, "first_name", ""), getattr(s, "last_name", ""),
                 getattr(s, "salesforce_id", ""), getattr(s, "texting_contact_id", ""),
@@ -160,6 +161,11 @@ class Diagnostics:
             re.compile("|".join(rf"{_START}{re.escape(t)}{_END}" for t in self._terms))
             if self._terms else None
         )
+
+    def add_students(self, students: Iterable) -> None:
+        """Also scrubs students who aren't on the roster, e.g. OA passes
+        read from Essential Actions."""
+        self.set_roster(list(getattr(self, "_students", [])) + list(students))
 
     def scrub(self, text: str) -> str:
         if self._pattern is not None:

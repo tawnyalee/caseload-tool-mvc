@@ -54,7 +54,7 @@ A **group** is usually one course. Pick it from the **Scenario Groups** dropdown
 - **+ Add Group** creates one. Leave **This group is a course** checked and name it by its course code (for example **D424**).
 - **📝 Edit Group** renames it. Renaming never changes the course it's for.
 - **⚙ Settings → Courses** sets each group's details: whether it's a course, its **course code**, whether it **has tasks** and **how many**, and whether it **has an objective assessment** (a course can have tasks, an OA, or both). Click **💾 Save Settings** when done. You can set up one course at a time: finished courses save even if another is incomplete, and a popup lists any that weren't saved and why.
-- **Default Outlook Signature** (top of **⚙ Settings**): optional. New Actions start with it, and you can still change it on any Action. **🎯 Send Task Emails** needs it.
+- **Default Outlook Signature** (top of **⚙ Settings**): optional. New Actions start with it, and you can still change it on any Action. **🎯 Send Task Emails** and **🎓 Send OA Emails** need it.
 - **Save notes directly to Salesforce (faster)** (just below it, on by default): notes and follow-ups are sent straight to Salesforce. Untick it to have them go through Salesforce's note form instead, which works the same but takes about 30 seconds or more per student. It applies to this computer only, and takes effect when you click **Save Settings**.
 - **Task emails** (in the same card, once a course has tasks): each row is the task a student **just passed**, so **Passed Task 1** is your email about Task 2. Choose a saved email, or use **➕ New** and **✏️ Edit** to write one, the same as on an Action. Then click **💾 Save Settings**. There's no row for a course's last task, and OAs aren't included yet.
 - **This course requires sequential submission** (under **Has tasks**, ticked by default): leave it ticked when students must submit tasks in order. Untick it for a course where they can submit tasks in any order. Its rows then become **Task 1 Support**, **Task 2 Support** and so on, one for each task. After any pass, the student gets the email for the lowest task they haven't submitted yet, and a student who has submitted every task gets nothing. Any submission counts, including one that came back for revisions. Each setting keeps its own emails, so switching back doesn't lose them.
@@ -90,6 +90,17 @@ You don't need an Action for this. Set up each course in **⚙ Settings**, choos
 
 Anyone who can't get an email because none is set up for that task is listed in the results with the reason.
 
+### OA emails: email students who passed an OA
+
+An OA pass only shows in Salesforce's **Essential Actions** list, not on your caseload, so this has its own button. In **⚙ Settings**, check **Has an objective assessment (OA)** on the course and choose its **OA passed email** (**➕ New** or **✏️ Edit** works like the task emails). Then click **🎓 Send OA Emails** on the Dashboard.
+
+- **Who it finds:** every row in your Essential Actions list whose reason starts with **Student Passed Objective Assessment**, matched to the course by its course code. You don't need to open the Essential Actions tab yourself; the app reads it.
+- **Before anything sends:** the review window shows each course's email and the students getting it.
+- **What they get:** "Hello" and their preferred name (or first name), then your OA passed email. The subject is **Congrats!**
+- **In Salesforce:** a note with the subject **OA Pass** and the text **Congratulated ST on passing OA**, saved with the Essential Action **closed**, just like **Add Note & Close EA**. There's no follow-up note.
+- If the note saves but the Essential Action stays open, the results list that student so you can close it by hand. Don't add a second note.
+- Anyone who can't be emailed (no OA passed email set up, or a course that isn't in Settings) is listed with the reason, and their Essential Action stays open.
+
 ### Personalizing emails
 
 Use **Insert Field** while writing an email subject or body to add details that fill in for each student. You can also type them (with the double braces, e.g. **{{last_passed_task}}**) into **Note Details** — the note subject, body, and follow-up note:
@@ -102,11 +113,12 @@ Use **Insert Field** while writing an email subject or body to add details that 
 
 ## Sending
 
-There are five ways to send. Every one shows you exactly who will be contacted first, and **nothing goes out until you click Send or Run**.
+There are six ways to send. Every one shows you exactly who will be contacted first, and **nothing goes out until you click Send or Run**.
 
 - **Run** (next to an Action) — sends that Action.
 - **✉️ Send Welcome Emails** (Dashboard) — runs each group's welcome Action. The review window shows each course's message before anything sends.
 - **🎯 Send Task Emails** (Dashboard) — emails students who just passed a task, using your course settings.
+- **🎓 Send OA Emails** (Dashboard) — emails students who passed an OA and closes their Essential Action with a note.
 - **🗂️ Run Action Batch** (Dashboard) — runs several Actions in an order you choose. **💾 Save Batch** keeps a combination you use often; pick it later from **Saved Batches**.
 - **📤 Send Email to All Students** (Dashboard) — a one-off email, such as a class cancellation, with an optional note.
 
@@ -140,13 +152,14 @@ Texting is **new and still being tested**. When an Action has **Send Text** chec
 - A Mongoose window opens with the first text and stays open while the app is open, so you only log in when Mongoose asks. It closes with the app, or when you click **↻ Refresh Caseload**.
 - You don't need to refresh before sending. If the caseload loaded more than 5 minutes ago, Welcome Emails, single Actions, batches and Send Email to All Students reload it first. **🎯 Send Task Emails** doesn't reload, since it's a once-a-day check. If a reload fails, you can try again, continue with the older roster, or cancel.
 - Each text goes out from the **department matching the student's course** (for example D424), so it lands in the right shared inbox.
-- Each one is **scheduled**, never sent instantly: for the next time between **10 AM and 8 PM in the student's own time zone**.
-- **For now, you finish each text yourself.** Mongoose comes to the front and the progress window says "Waiting for you". The app fills it in (student, message, name, date and time) and waits. Check it, then click **Schedule** — or **Cancel** to skip that student.
+- **One message per class:** everyone in the same course who gets the same wording is added to **one** scheduled message, up to 25 students per message. If a field like {{student_name}} makes the wording different for each student, each one gets their own message.
+- Each one is **scheduled**, never sent instantly: for the first time that's between **10 AM and 8 PM in every recipient's own time zone**. US time zones from Hawaii to Eastern always share such a time.
+- **The app schedules each text itself.** It fills in the students, message, name, date and time, then clicks **Schedule**. If Mongoose doesn't close the form afterward, those texts are listed as failed, with a screenshot, so you can check them in Mongoose.
 - The **Text Subject** becomes the text's **Message Name** in Mongoose. Fields like **{{student_name}}** work in the text and its subject.
 - A text can be at most **150 characters**. The Action shows a live count, and Save Action refuses a longer one. Fields like {{student_name}} count as written, so leave some room: if a filled-in text comes out over 150, that student is skipped and listed in the results.
-- A student is **skipped and listed** in the results when the app can't place them safely: no texting ID (try **↻ Refresh Caseload**), no time zone, or not found in that course's Mongoose department (for example, they opted out). Text those students by hand if needed.
+- A student is **skipped and listed** in the results when the app can't place them safely: no texting ID (try **↻ Refresh Caseload**), no time zone, or not found in that course's Mongoose department (for example, they opted out). The rest of the class still gets the message. Text those students by hand if needed.
 - Texts never write a Salesforce note — Mongoose notes them itself.
-- The app finishes every student's email and note first, across a whole batch. Only then does it open Mongoose for the texts, one student at a time, grouped by course. A text problem can't stop an email or a note. If Mongoose can't be opened, those texts are listed as skipped.
+- The app finishes every student's email and note first, across a whole batch. Only then does it open Mongoose for the texts, one message per course. A text problem can't stop an email or a note. If Mongoose can't be opened, those texts are listed as skipped.
 
 **⬇ Sync Texting IDs** and **↻ Restart Browser** are placeholders and do nothing yet.
 
@@ -155,7 +168,7 @@ Texting is **new and still being tested**. When an Action has **Send Text** chec
 Test mode lets you try everything on your real caseload **without emailing or texting any student or writing to Salesforce**:
 
 - Every email goes to **one address you choose**, with the student it was meant for shown at the top, so you can check names and personalization.
-- Notes are **not** written to Salesforce.
+- Notes are **not** written to Salesforce, and Essential Actions stay open. **🎓 Send OA Emails** still reads your real Essential Actions list.
 - Texts are filled in inside Mongoose and then **thrown away** — nothing is scheduled, so no student gets a text.
 - A **yellow TEST MODE bar** stays across the top of the app.
 

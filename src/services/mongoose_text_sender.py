@@ -8,21 +8,24 @@ on purpose. Driving it all
 happens on the BackgroundWorker thread, since Playwright's sync API must stay
 on the thread that started it.
 
-Per student (mongoose_compose.py does the clicking): the student's course
-department, found by Salesforce Contact Id, scheduled for the next 10 AM-8 PM
-slot in the student's own time zone (text_scheduling.py). A student with no
+One message per class (developer, 2026-11-08; mongoose_compose.py does the
+clicking): the course's department, every recipient found by Salesforce
+Contact Id, scheduled for the first time inside every recipient's own
+10 AM-8 PM window (text_scheduling.shared_send_time). A student with no
 Contact Id, no time zone, or no match in that department is SKIPPED and
 listed, never guessed at.
 
 Three modes:
   - DRY_RUN (test mode): fill everything in, then throw it away. Nothing is
     scheduled - the texting version of test mode's email redirect.
-  - REVIEW (live, for now): fill it in, then wait for the professor to click
-    Schedule or Cancel in the window themselves.
-  - AUTOMATIC: click Schedule. Only once the professor decides to trust it.
+  - REVIEW: fill it in, then wait for the professor to click Schedule or
+    Cancel in the window themselves. No longer used by the app; kept for
+    the live test script.
+  - AUTOMATIC (live, since 2026-11-08): click Schedule, then check that
+    Mongoose closed the form.
 """
 from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Optional
 
 from src.models.student import Student
 from src.services.browser_launch import (
@@ -32,14 +35,17 @@ from src.services.mongoose_browser_session import MONGOOSE_URL
 from src.services.mongoose_compose import (
     LOGGED_IN_SELECTOR, NoMongooseMatch, ScheduledText, compose_scheduled_text,
 )
-from src.services.text_scheduling import NoTimeZoneError, next_send_time
-from src.services.text_sender import TextSender, TextSkipped
+from src.services.text_scheduling import NoTimeZoneError, shared_send_time, student_zone
+from src.services.text_sender import TextOutcome, TextSender, TextSkipped
 
 DRY_RUN = "dry_run"
 REVIEW = "review"
 AUTOMATIC = "automatic"
 
 LOGIN_TIMEOUT_MS = 5 * 60 * 1000
+# Most students in one Mongoose message. Mongoose's own limit is unknown;
+# a typical run is 20-30 students (developer, 2026-10-13).
+MAX_RECIPIENTS = 25
 REVIEW_TIMEOUT_MS = 10 * 60 * 1000
 
 
@@ -58,7 +64,7 @@ def describe_time(moment: datetime) -> str:
 
 
 class MongooseTextSender(TextSender):
-    def __init__(self, mode: str = REVIEW):
+    def __init__(self, mode: str = AUTOMATIC):
         if mode not in (DRY_RUN, REVIEW, AUTOMATIC):
             raise ValueError(f"Unknown texting mode: {mode}")
         self.mode = mode
@@ -96,40 +102,108 @@ class MongooseTextSender(TextSender):
             raise RuntimeError("Mongoose login wasn't finished within 5 minutes - no texts were sent.") from None
 
     def send(self, student: Student, body: str, message_name: str) -> str:
-        if not student.texting_contact_id:
-            raise TextSkipped("No texting ID for this student (click Refresh Caseload, then try again)")
-        if not student.course_code:
-            raise TextSkipped("No course code, so no Mongoose department to text from")
-        try:
-            student_time = next_send_time(student.timezone)
-        except NoTimeZoneError:
-            raise TextSkipped(f"No usable time zone ({student.timezone or 'blank'}) - text them by hand") from None
-        entry_time = mongoose_entry_time(student_time)
+        """One student: the same route as a message to a class of one."""
+        outcome = self.send_group([student], body, message_name)[0]
+        if outcome.outcome == "skipped":
+            raise TextSkipped(outcome.detail)
+        if outcome.outcome == "failed":
+            raise RuntimeError(outcome.detail) from outcome.error
+        return outcome.detail
 
-        self.ensure_ready()
-        self._go_home()
-        text = ScheduledText(
-            course_code=student.course_code,
-            contact_id=student.texting_contact_id,
-            body=body,
-            message_name=message_name,
-            send_at=entry_time,
-        )
+    def send_group(self, students: List[Student], body: str, message_name: str) -> List[TextOutcome]:
+        """One Mongoose message to every student here who can be placed
+        (developer, 2026-11-08: one message per class). The caller groups
+        them by course and wording. A student with no Contact Id, course or
+        usable time zone, or not found in the department, is skipped and
+        listed; the rest still get the text. Over MAX_RECIPIENTS, or when no
+        one time suits everyone's zone, it's split into more messages."""
+        outcomes: Dict[int, TextOutcome] = {}
+        ready: List[int] = []
+        for index, student in enumerate(students):
+            problem = self._why_not_textable(student)
+            if problem:
+                outcomes[index] = TextOutcome(student, "skipped", problem)
+            else:
+                ready.append(index)
+        for group in self._message_groups(ready, students):
+            group_outcomes = self._schedule_one_message([students[i] for i in group], body, message_name)
+            outcomes.update(zip(group, group_outcomes))
+        return [outcomes[index] for index in range(len(students))]
+
+    @staticmethod
+    def _why_not_textable(student: Student) -> str:
+        if not student.texting_contact_id:
+            return "No texting ID for this student (click Refresh Caseload, then try again)"
+        if not student.course_code:
+            return "No course code, so no Mongoose department to text from"
         try:
-            compose_scheduled_text(self._page, text, commit=self.mode == AUTOMATIC)
+            student_zone(student.timezone)
+        except NoTimeZoneError:
+            return f"No usable time zone ({student.timezone or 'blank'}) - text them by hand"
+        return ""
+
+    @staticmethod
+    def _message_groups(indexes: List[int], students: List[Student]) -> List[List[int]]:
+        """Positions of the students sharing each message: the same course,
+        at most MAX_RECIPIENTS, and one time that suits every one of them
+        (otherwise one message per time zone)."""
+        by_course: Dict[str, List[int]] = {}
+        for index in indexes:
+            by_course.setdefault(students[index].course_code.strip().upper(), []).append(index)
+        groups = []
+        for course_indexes in by_course.values():
+            try:
+                shared_send_time([students[i].timezone for i in course_indexes])
+                parts = [course_indexes]
+            except ValueError:
+                by_zone: Dict[str, List[int]] = {}
+                for index in course_indexes:
+                    by_zone.setdefault(students[index].timezone.strip().upper(), []).append(index)
+                parts = list(by_zone.values())
+            for part in parts:
+                groups.extend(part[i:i + MAX_RECIPIENTS] for i in range(0, len(part), MAX_RECIPIENTS))
+        return groups
+
+    def _schedule_one_message(self, students: List[Student], body: str, message_name: str) -> List[TextOutcome]:
+        send_at = shared_send_time([s.timezone for s in students])
+        try:
+            self.ensure_ready()
+            self._go_home()
+            text = ScheduledText(
+                course_code=students[0].course_code,
+                contact_ids=[s.texting_contact_id for s in students],
+                body=body,
+                message_name=message_name,
+                send_at=mongoose_entry_time(send_at),
+            )
+            missing = set(compose_scheduled_text(self._page, text, commit=self.mode == AUTOMATIC))
+            found = [s for s in students if s.texting_contact_id not in missing]
+            if self.mode == REVIEW:
+                self._wait_for_review(found[0])
         except NoMongooseMatch as exc:
-            raise TextSkipped(f"{exc} ({student.course_code})") from None
+            return [TextOutcome(s, "skipped", f"{exc} ({s.course_code})") for s in students]
         except Exception as exc:
             shot = self._screenshot("text-failed")
-            raise RuntimeError(f"{exc} (screenshot: {shot})") from exc
+            return [TextOutcome(s, "failed", f"{exc} (screenshot: {shot})", exc) for s in students]
 
-        when = f"{describe_time(student_time)} student time"
-        if self.mode == DRY_RUN:
-            return f"TEST MODE - filled in for {when}, not scheduled"
-        if self.mode == REVIEW:
-            self._wait_for_review(student)
-            return f"Filled in for {when}; you clicked Schedule or Cancel in Mongoose"
-        return f"Scheduled for {when}"
+        together = f" (one message to {len(found)} students)" if len(found) > 1 else ""
+        outcomes = []
+        for student in students:
+            if student.texting_contact_id in missing:
+                outcomes.append(TextOutcome(student, "skipped", (
+                    "Not found in this Mongoose department (they may have opted out of texts) "
+                    f"({student.course_code})"
+                )))
+                continue
+            when = f"{describe_time(send_at.astimezone(student_zone(student.timezone)))} student time"
+            if self.mode == DRY_RUN:
+                detail = f"TEST MODE - filled in for {when}{together}, not scheduled"
+            elif self.mode == REVIEW:
+                detail = f"Filled in for {when}{together}; you clicked Schedule or Cancel in Mongoose"
+            else:
+                detail = f"Scheduled for {when}{together}"
+            outcomes.append(TextOutcome(student, "success", detail))
+        return outcomes
 
     def _screenshot(self, tag: str) -> str:
         """Saves what the Mongoose window showed when a step failed, next to
@@ -137,6 +211,8 @@ class MongooseTextSender(TextSender):
         Best-effort: returns the path, or a note if it couldn't be taken."""
         from src.services import app_paths
 
+        if self._page is None:
+            return "not available"
         folder = app_paths.screenshots_dir()
         path = folder / f"{datetime.now():%Y%m%d-%H%M%S}-{tag}.png"
         try:

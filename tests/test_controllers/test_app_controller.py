@@ -37,7 +37,7 @@ from unittest.mock import ANY
 from src.services.note_writer import FakeNoteWriter, PlaywrightNoteWriter
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter
-from src.services.mongoose_text_sender import DRY_RUN, REVIEW, MongooseTextSender
+from src.services.mongoose_text_sender import AUTOMATIC, DRY_RUN, MongooseTextSender
 
 
 
@@ -709,7 +709,7 @@ def test_without_test_mode_file_email_is_real_outlook_and_notes_are_real(mock_ct
     assert controller.action_runner.email_sender is controller.email_sender
     # Live texts wait for the professor to click Schedule in Mongoose.
     assert isinstance(controller.text_sender, MongooseTextSender)
-    assert controller.text_sender.mode == REVIEW
+    assert controller.text_sender.mode == AUTOMATIC  # live texts schedule themselves (2026-11-08)
 
 
 @patch.object(AppController, "_refresh_caseload_at_startup")

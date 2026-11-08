@@ -42,7 +42,7 @@ def test_saving_returns_settings_by_group_id_with_tasks_and_oa_together(ctk_root
         assert view.save() is True
         assert saved == [{"G1": {"is_course": True, "course_code": "D424", "has_tasks": True,
                                  "task_count": 4, "has_objective_assessment": True, "task_emails": {},
-                                 "sequential_tasks": True}}]
+                                 "sequential_tasks": True, "oa_email_template_id": ""}}]
     finally:
         view.destroy()
 
@@ -223,5 +223,23 @@ def test_an_any_order_course_shows_task_support_rows_and_saves_the_choice(ctk_ro
 
         view.save()
         assert saved[0][course.id]["sequential_tasks"] is False
+    finally:
+        view.destroy()
+
+
+def test_a_course_with_an_oa_has_an_oa_passed_email_row_that_saves_by_template_id(ctk_root):
+    from src.views.settings_view import OA_ROW
+
+    group = Group(name="D424", group_id="G1", is_course=True, course_code="D424", has_objective_assessment=True)
+    view = SettingsView(ctk_root, groups=[group], on_save=lambda *_: None, templates=[("T1", "OA congrats")])
+    try:
+        card = view.cards[0]
+        assert card._oa_widget is not None and card._oa_widget.get() == "(no email)"
+        card.choose_template(OA_ROW, "T1")
+        assert card._oa_widget.get() == "OA congrats"
+        assert card.read()["oa_email_template_id"] == "T1"
+        card.has_oa_var.set("off"); card._refresh_enabled()
+        assert card._oa_widget is None  # no OA, no row; the choice is kept
+        assert card.read()["oa_email_template_id"] == "T1"
     finally:
         view.destroy()

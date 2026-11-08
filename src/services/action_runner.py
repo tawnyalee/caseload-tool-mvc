@@ -38,8 +38,9 @@ from src.services.note_writer import NoteWriter
 from src.services.student_data_provider import StudentDataProvider
 from src.services.template_repository import TemplateRepository
 from src.services.task_emails import TaskEmail, build_task_email, html_to_plain_text, passed_in_look_back
+from src.services.oa_emails import OA_NOTE_SUBJECT, OaEmail, build_oa_emails, oa_pass_rows
 from src.services.task_utils import passed_task_number
-from src.services.text_sender import MAX_TEXT_LENGTH, TextSender, TextSkipped
+from src.services.text_sender import MAX_TEXT_LENGTH, TextOutcome, TextSender
 
 
 class RunControl:
@@ -444,6 +445,75 @@ class ActionRunner:
         )
         return summary
 
+    def get_oa_emails(self, groups: List[Group], essential_actions) -> List[OaEmail]:
+        """Every OA pass in Salesforce's Essential Actions list, with the
+        email its course has in Settings (or why it can't be sent)."""
+        rows = oa_pass_rows(essential_actions.read_rows())
+        return build_oa_emails(rows, groups, self.template_repo.get_by_id)
+
+    def run_oa_emails(
+        self,
+        oa_emails: List[OaEmail],
+        signature: str,
+        essential_actions,
+        included_ids_by_key: Optional[Dict[str, Set[str]]] = None,
+        control: Optional[RunControl] = None,
+    ) -> ActionRunSummary:
+        """Sends what get_oa_emails() found: the email, then the note with
+        the Essential Action closed (developer, 2026-11-04). No follow-up
+        note. Same rules as run(): the note only follows a sent email, and
+        one student's failure stops nobody else. `included_ids_by_key` is the
+        review window's selection, keyed by OaEmail.email_name."""
+        self.activity_logger.log("Starting OA-email run")
+        to_run = [
+            e for e in oa_emails
+            if e.problem or included_ids_by_key is None
+            or e.student.salesforce_id in included_ids_by_key.get(e.email_name, set())
+        ]
+        summary = ActionRunSummary()
+        if any(not e.problem for e in to_run):
+            self.email_sender.ensure_ready()
+        for position, oa_email in enumerate(to_run, start=1):
+            student = oa_email.student
+            if self._stopped(control, [e.student for e in to_run[position - 1:]], summary):
+                break
+            if control:
+                control.report(position, len(to_run), student.full_name)
+            self.activity_logger.log(f"[PROCESSING] {student.full_name} (ID: {student.salesforce_id})")
+            if oa_email.problem:
+                self.activity_logger.log(f"[SKIPPED] Email for {student.full_name} — {oa_email.problem}")
+                summary.results.append(
+                    StepResult(student=student, step_type="email", outcome="skipped", detail=oa_email.problem)
+                )
+                continue
+            result = self._send_email(student, oa_email.subject, oa_email.body, signature)
+            summary.results.append(result)
+            if result.outcome != "success":
+                detail = "Email was not sent successfully"
+                self.activity_logger.log(f"[SKIPPED] Note for {student.full_name} — {detail}")
+                summary.results.append(StepResult(student=student, step_type="note", outcome="skipped", detail=detail))
+                continue
+            summary.results.append(self._attempt_note_closing_ea(oa_email, essential_actions))
+        self.activity_logger.log(
+            f"OA-email run complete — {summary.succeeded} succeeded, "
+            f"{summary.failed} failed, {summary.skipped} skipped"
+        )
+        return summary
+
+    def _attempt_note_closing_ea(self, oa_email: OaEmail, essential_actions) -> StepResult:
+        student = oa_email.student
+        self.activity_logger.log(
+            f"[NOTE RECORD] {student.full_name}: course={oa_email.row.course_code} "
+            f"subject={OA_NOTE_SUBJECT!r} closes Essential Action {oa_email.row.ea_id}"
+        )
+        try:
+            how = essential_actions.save_note_and_close(oa_email.row, OA_NOTE_SUBJECT, oa_email.note_body)
+            self.activity_logger.log(f"[NOTE] {how} - {student.full_name}")
+            return StepResult(student=student, step_type="note", outcome="success")
+        except Exception as exc:
+            self.activity_logger.log_failure(f"[NOTE FAILED] {student.full_name}: {exc}", exc)
+            return StepResult(student=student, step_type="note", outcome="failed", detail=str(exc))
+
     def run_batch(
         self,
         items: List[Tuple[Action, str]],
@@ -574,23 +644,75 @@ class ActionRunner:
         except Exception as exc:
             problem = f"Texting wasn't available: {exc}"
             self.activity_logger.log_failure(f"[TEXT UNAVAILABLE] {exc}", exc)
-        queue = sorted(texts, key=lambda text: text.student.course_code)
+        messages = self._text_messages(texts)
         try:
-            for position, text in enumerate(queue, start=1):
+            for position, (body, message_name, group) in enumerate(messages, start=1):
                 if not problem and control and control.stop_requested:
                     problem = "Run was stopped before this text"
                     self.activity_logger.log("[STOPPED] Run stopped by the user - remaining texts not started")
                 if problem:
-                    self.activity_logger.log(f"[TEXT SKIPPED] {text.student.full_name}: {problem}")
-                    text.summary.results.append(
-                        StepResult(student=text.student, step_type="text", outcome="skipped", detail=problem)
-                    )
+                    for text in group:
+                        self.activity_logger.log(f"[TEXT SKIPPED] {text.student.full_name}: {problem}")
+                        text.summary.results.append(
+                            StepResult(student=text.student, step_type="text", outcome="skipped", detail=problem)
+                        )
                     continue
                 if control:
-                    control.report(position, len(queue), text.student.full_name)
-                text.summary.results.append(self._attempt_text(text.student, text.action))
+                    course = group[0].student.course_code.strip()
+                    who = group[0].student.full_name if len(group) == 1 else (
+                        f"{course} ({len(group)} students)" if course else f"{len(group)} students"
+                    )
+                    control.report(position, len(messages), who)
+                for text, result in zip(group, self._attempt_texts([t.student for t in group], body, message_name)):
+                    text.summary.results.append(result)
         finally:
             self.text_sender.finish()
+
+    def _text_messages(self, texts: List[QueuedText]) -> List[Tuple[str, str, List[QueuedText]]]:
+        """(body, message name, texts) per message, sorted by course: every
+        student of one course getting the same filled-in wording shares one
+        message (developer, 2026-11-08). A text over the length limit is
+        listed as skipped here and sent to nobody."""
+        messages: Dict[Tuple[str, str, str], List[QueuedText]] = {}
+        for text in sorted(texts, key=lambda t: t.student.course_code):
+            body = render_merge_fields(text.action.text_body, text.student)
+            message_name = render_merge_fields(text.action.text_subject, text.student) or text.action.name
+            if len(body) > MAX_TEXT_LENGTH:
+                # It can get here from an older action, or from a merge field
+                # filling in a long value.
+                detail = f"Text is {len(body)} characters, over the {MAX_TEXT_LENGTH} limit - not sent"
+                self.activity_logger.log(f"[TEXT SKIPPED] {text.student.full_name}: {detail}")
+                text.summary.results.append(
+                    StepResult(student=text.student, step_type="text", outcome="skipped", detail=detail)
+                )
+                continue
+            key = (text.student.course_code.strip().upper(), body, message_name)
+            messages.setdefault(key, []).append(text)
+        return [(body, name, group) for (_course, body, name), group in messages.items()]
+
+    def _attempt_texts(self, students: List[Student], body: str, message_name: str) -> List[StepResult]:
+        """One message to these students of one course, one result each."""
+        try:
+            outcomes = self.text_sender.send_group(students, body, message_name)
+        except Exception as exc:
+            outcomes = [TextOutcome(student, "failed", str(exc), exc) for student in students]
+        results = []
+        for outcome in outcomes:
+            name = outcome.student.full_name
+            if outcome.outcome == "success":
+                self.activity_logger.log(f"[TEXT] {outcome.detail} - {name}")
+                results.append(StepResult(student=outcome.student, step_type="text", outcome="success"))
+                continue
+            if outcome.outcome == "skipped":
+                self.activity_logger.log(f"[TEXT SKIPPED] {name}: {outcome.detail}")
+            elif outcome.error is not None:
+                self.activity_logger.log_failure(f"[TEXT FAILED] {name}: {outcome.detail}", outcome.error)
+            else:
+                self.activity_logger.log(f"[TEXT FAILED] {name}: {outcome.detail}")
+            results.append(StepResult(
+                student=outcome.student, step_type="text", outcome=outcome.outcome, detail=outcome.detail,
+            ))
+        return results
 
     def _stopped(self, control: Optional[RunControl], remaining: List[Student], summary: ActionRunSummary) -> bool:
         """If a stop was requested, marks every remaining student as not
@@ -669,28 +791,6 @@ class ActionRunner:
         except Exception as exc:
             self.activity_logger.log_failure(f"[EMAIL FAILED] {student.full_name} <{student.email}>: {exc}", exc)
             return StepResult(student=student, step_type="email", outcome="failed", detail=str(exc))
-
-    def _attempt_text(self, student: Student, action: Action) -> StepResult:
-        # The action's text subject is the platform's label for the text
-        # (Mongoose's "Message Name"); merge fields work in both.
-        body = render_merge_fields(action.text_body, student)
-        message_name = render_merge_fields(action.text_subject, student) or action.name
-        if len(body) > MAX_TEXT_LENGTH:
-            # It can get here from an older action, or from a merge field
-            # filling in a long value.
-            detail = f"Text is {len(body)} characters, over the {MAX_TEXT_LENGTH} limit - not sent"
-            self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {detail}")
-            return StepResult(student=student, step_type="text", outcome="skipped", detail=detail)
-        try:
-            what = self.text_sender.send(student, body, message_name)
-            self.activity_logger.log(f"[TEXT] {what} - {student.full_name}")
-            return StepResult(student=student, step_type="text", outcome="success")
-        except TextSkipped as exc:
-            self.activity_logger.log(f"[TEXT SKIPPED] {student.full_name}: {exc}")
-            return StepResult(student=student, step_type="text", outcome="skipped", detail=str(exc))
-        except Exception as exc:
-            self.activity_logger.log_failure(f"[TEXT FAILED] {student.full_name}: {exc}", exc)
-            return StepResult(student=student, step_type="text", outcome="failed", detail=str(exc))
 
     def _attempt_note(
         self,

@@ -5,6 +5,7 @@ available. The real adapter (mongoose_text_sender.py) implements this same
 interface.
 """
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Set
 
 from src.models.student import Student
@@ -20,6 +21,15 @@ class TextSkipped(Exception):
     not as a failure."""
 
 
+@dataclass
+class TextOutcome:
+    """What happened to one student's text in send_group()."""
+    student: Student
+    outcome: str        # "success", "skipped" or "failed"
+    detail: str = ""    # for the log: what was done, or why not
+    error: Optional[BaseException] = None  # the failure, for the diagnostics log
+
+
 class TextSender(ABC):
     # Called with a message when a text is waiting on the professor.
     on_waiting: Optional[Callable[[str], None]] = None
@@ -31,6 +41,21 @@ class TextSender(ABC):
         happened, for the log. Raises TextSkipped when it deliberately
         didn't send, or any other exception if sending failed."""
         raise NotImplementedError
+
+    def send_group(self, students: List[Student], body: str, message_name: str) -> List[TextOutcome]:
+        """The same text to several students of one course, one outcome each,
+        in order. By default one send() each; Mongoose overrides this to
+        schedule one message to all of them (developer, 2026-11-08). One
+        student's problem never costs another their text."""
+        outcomes = []
+        for student in students:
+            try:
+                outcomes.append(TextOutcome(student, "success", self.send(student, body, message_name)))
+            except TextSkipped as exc:
+                outcomes.append(TextOutcome(student, "skipped", str(exc)))
+            except Exception as exc:
+                outcomes.append(TextOutcome(student, "failed", str(exc), exc))
+        return outcomes
 
     def ensure_ready(self) -> None:
         """Called once before a run that sends texts (e.g. to log in), so a

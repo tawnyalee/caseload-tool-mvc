@@ -65,6 +65,27 @@ class DashboardView(ctk.CTkFrame):
             justify="left",
         )
         task_hint.pack(anchor="w", padx=20, pady=(0, 10))
+        # OA passes only show in Salesforce's Essential Actions list
+        # (developer's design, 2026-11-04: below Send Task Emails).
+        self.btn_send_oa_emails = ctk.CTkButton(
+            self.scrollable_container,
+            text="🎓 Send OA Emails",
+            height=40,
+            font=ctk.CTkFont(weight="bold"),
+            command=self._on_send_oa_emails_clicked,
+        )
+        self.btn_send_oa_emails.pack(anchor="w", padx=20, pady=(0, 4))
+        ctk.CTkLabel(
+            self.scrollable_container,
+            text=(
+                "Emails students who passed an OA, from Salesforce's Essential Actions list, "
+                "and closes each one with a note."
+            ),
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+            wraplength=500,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 10))
 
         self._build_divider()
 
@@ -243,6 +264,10 @@ class DashboardView(ctk.CTkFrame):
     def _on_send_task_emails_clicked(self) -> None:
         if self.controller and hasattr(self.controller, "handle_send_task_emails"):
             self.controller.handle_send_task_emails(self.task_days_entry.get())
+
+    def _on_send_oa_emails_clicked(self) -> None:
+        if self.controller and hasattr(self.controller, "handle_send_oa_emails"):
+            self.controller.handle_send_oa_emails()
 
     def _on_send_all_clicked(self) -> None:
         subject = self.adhoc_subject.get().strip()

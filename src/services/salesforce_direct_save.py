@@ -86,18 +86,34 @@ def result_state(body: str) -> str:
         return match.group(1) if match else ""
 
 
-def _post(page, credentials: AuraCredentials, endpoint: str, action: dict, page_uri: str) -> None:
+def return_value(body: str):
+    """The first action's returnValue in an Aura response, or None."""
+    start = (body or "").find("{")
+    try:
+        actions = json.loads(body[start:]).get("actions") or [] if start >= 0 else []
+        return actions[0].get("returnValue") if actions else None
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _post(page, credentials: AuraCredentials, endpoint: str, action: dict, page_uri: str):
+    """Sends one Aura action; returns its returnValue. Anything but SUCCESS
+    raises DirectSaveFailed."""
     message = json.dumps({"actions": [{"id": "1;a", **action}]})
     result = page.evaluate(_POST_AURA, [endpoint, message, credentials.context, credentials.token, page_uri])
-    state = result_state(result.get("body") or "")
+    body = result.get("body") or ""
+    state = result_state(body)
     if state != "SUCCESS":
         raise DirectSaveFailed(f"Salesforce answered state={state or 'none'} (HTTP {result.get('status')})")
+    return return_value(body)
 
 
 def save_note(
     page, credentials: AuraCredentials, contact_id: str, course_code: str, subject: str, body: str,
-    note_type: str = NOTE_TYPE_EMAIL_TO_STUDENT,
+    note_type: str = NOTE_TYPE_EMAIL_TO_STUDENT, close_eas: Optional[list] = None,
 ) -> None:
+    """`close_eas`: full Essential Action records to close with this note,
+    the way the form's Add Note & Close EA does (see close_ea_record)."""
     note = {
         "Type__c": "", "Name": "",
         "CourseProgramInfoDiscussed__c": False, "CourseProgramInformationRequested__c": False,
@@ -105,7 +121,7 @@ def save_note(
     }
     params = {
         "contactId": contact_id, "note": note, "extNote": {}, "survey": {"Student__c": contact_id},
-        "saveNoteEAs": [], "saveNoteAndCloseEAs": [], "saveExtNoteEAs": [], "saveExtNoteAndCloseEAs": [],
+        "saveNoteEAs": [], "saveNoteAndCloseEAs": list(close_eas or []), "saveExtNoteEAs": [], "saveExtNoteAndCloseEAs": [],
         "noteType": note_type, "courseCode": course_code, "subject": subject or note_type,
         "text": note_body_as_html(body), "removedEAJunctionIds": [],
     }
@@ -129,3 +145,40 @@ def save_follow_up(page, credentials: AuraCredentials, course_record_id: str, te
         },
         "/lightning/n/Caseload_App_Page",
     )
+
+
+# What the form sends as the chosen note action when closing an EA (recorded
+# 2026-11-04: NoteAction null, NoteActionDisplay 19 characters).
+CLOSE_EA_DISPLAY = "Add Note & Close EA"
+
+
+def get_essential_actions(page, credentials: AuraCredentials, contact_id: str) -> list:
+    """The student's Essential Actions as full records, from the same request
+    the Essential Action table makes (recorded 2026-11-04)."""
+    value = _post(
+        page, credentials, "/aura?other.EssentialActionDataTable.getEssentialActions=1",
+        {
+            "descriptor": "apex://EssentialActionDataTableController/ACTION$getEssentialActions",
+            "callingDescriptor": "markup://c:EssentialActionDataTable", "params": {"contactId": contact_id},
+        },
+        f"/lightning/r/Contact/{contact_id}/view",
+    )
+    eas = value.get("eas") if isinstance(value, dict) else None
+    if not isinstance(eas, list):
+        raise DirectSaveFailed("Salesforce didn't return the student's Essential Actions")
+    return [ea for ea in eas if isinstance(ea, dict)]
+
+
+def close_ea_record(eas: list, ea_id: str) -> dict:
+    """The record the save needs to close `ea_id`: the full EA plus the
+    chosen note action, as the form sends it."""
+    record = next((ea for ea in eas if str(ea.get("Id") or "") == ea_id), None)
+    if record is None:
+        raise DirectSaveFailed("That Essential Action wasn't in the student's list (already closed?)")
+    return {**record, "NoteAction": None, "NoteActionDisplay": CLOSE_EA_DISPLAY}
+
+
+def is_closed(eas: list, ea_id: str) -> bool:
+    """After the save: closed means it has a completed date, or is gone."""
+    record = next((ea for ea in eas if str(ea.get("Id") or "") == ea_id), None)
+    return record is None or bool(record.get("CompletedDateTime__c"))

@@ -781,7 +781,7 @@ def test_run_reports_progress_before_each_student(tmp_path):
 
     assert seen == [
         (1, 3, "Jane Doe"), (2, 3, "John Roe"), (3, 3, "Amy Lee"),
-        (1, 3, "Texts: Jane Doe"), (2, 3, "Texts: John Roe"), (3, 3, "Texts: Amy Lee"),
+        (1, 1, "Texts: 3 students"),  # one course, one wording: one message
     ]
 
 

@@ -27,8 +27,12 @@ from src.services.student_data_provider import (
 from src.services.outlook_email_sender import OutlookEmailSender
 from src.services import app_paths
 from src.services.test_mode import RedirectingEmailSender, TestModeNoteWriter, load_redirect_email
-from src.services.mongoose_text_sender import DRY_RUN, REVIEW, MongooseTextSender
+from src.services.mongoose_text_sender import AUTOMATIC, DRY_RUN, MongooseTextSender
 from src.services.note_writer import PlaywrightNoteWriter
+from src.services.essential_actions import PlaywrightEssentialActions, TestModeEssentialActions
+from src.services.essential_action_form import fill_essential_action_form
+from src.services import oa_emails
+from src.services.merge_fields import render_merge_fields
 from src.services import salesforce_browser_session
 from src.services.browser_launch import playwright_session
 from src.services.salesforce_callbacks import (
@@ -183,9 +187,9 @@ class AppController:
         if self.test_mode:
             self.email_sender = RedirectingEmailSender(self.email_sender, self.test_mode_redirect)
         # Real Mongoose texting (2026-10-28). Test mode fills each text in and
-        # throws it away; live, each one waits for the professor to click
-        # Schedule in the Mongoose window until they choose to automate it.
-        self.text_sender = MongooseTextSender(mode=DRY_RUN if self.test_mode else REVIEW)
+        # throws it away; live, the app clicks Schedule itself (developer,
+        # 2026-11-08: always automatic, no review step).
+        self.text_sender = MongooseTextSender(mode=DRY_RUN if self.test_mode else AUTOMATIC)
 
         # Confirmed working end-to-end against production Salesforce (see
         # src/CLAUDE.md's Salesforce integration plan). Construction never
@@ -203,8 +207,17 @@ class AppController:
             log=self.activity_logger.log,
             use_direct_saves=lambda: self.app_settings.use_direct_saves,
         )
+        # Send OA Emails reads Salesforce's Essential Actions list and closes
+        # each one with its note (essential_actions.py). Test mode reads the
+        # real list but writes nothing.
+        self.essential_actions = PlaywrightEssentialActions(
+            use_direct_saves=lambda: self.app_settings.use_direct_saves,
+            log=self.activity_logger.log,
+            fill_form=fill_essential_action_form,
+        )
         self.activity_logger.diagnostics.header(test_mode=self.test_mode)
         if self.test_mode:
+            self.essential_actions = TestModeEssentialActions(self.essential_actions)
             self.note_writer = TestModeNoteWriter()
             self.activity_logger.log(
                 f"TEST MODE ON - all email goes to {self.test_mode_redirect or '(no valid address - sends will fail)'}; "
@@ -632,6 +645,95 @@ class AppController:
             on_confirm=_on_confirm,
         )
 
+    def handle_send_oa_emails(self) -> None:
+        """Dashboard's Send OA Emails (developer's design, 2026-11-04): reads
+        Salesforce's Essential Actions list, matches each OA pass to its
+        course's OA passed email in Settings, and after the review window
+        sends it and saves the note with the Essential Action closed. These
+        students may not be on the roster, so the roster isn't needed."""
+        if self._is_busy_and_told_user():
+            return
+        if not salesforce_browser_session.has_session():
+            messagebox.showinfo(
+                "Send OA Emails", "Log in to Salesforce first: click ↻ Refresh Caseload, then try again."
+            )
+            return
+        signature = self.default_signature
+        if signature not in self.signature_provider.get_signature_names():
+            messagebox.showwarning(
+                "Default signature needed",
+                "OA emails use your default signature. Choose one at the top of ⚙ Settings, then try again.",
+            )
+            return
+        if not any(g.is_course and g.has_objective_assessment for g in self.groups):
+            messagebox.showinfo(
+                "Send OA Emails",
+                "No courses have 'Has an objective assessment (OA)' checked yet. Set that up in ⚙ Settings.",
+            )
+            return
+
+        def _found(found):
+            self.activity_logger.diagnostics.add_students([e.student for e in found])
+            self.activity_logger.log(f"Essential Actions read: {len(found)} OA pass(es)")
+            self._review_oa_emails(found, signature)
+
+        self._run_in_background(
+            "Reading Essential Actions",
+            lambda control: self.action_runner.get_oa_emails(self.groups, self.essential_actions),
+            on_finished=_found,
+            stoppable=False,
+        )
+
+    def _review_oa_emails(self, found, signature: str) -> None:
+        problems = [f"{e.student.full_name} ({e.row.course_code}): {e.problem}" for e in found if e.problem]
+        batches = oa_emails.batches_for_review(found)
+        if not batches:
+            lines = ["There are no OA emails to send."] if not found else ["None of the OA passes can be emailed:"]
+            messagebox.showinfo("Send OA Emails", "\n".join(lines + problems))
+            return
+        review_items = [
+            MultiReviewItem(
+                key=batch[0].email_name,
+                label=f"{batch[0].row.course_code} — Passed OA — {batch[0].subject} — {batch[0].email_name}",
+                students=[e.student for e in batch],
+                preview=oa_emails.html_to_plain_text(render_merge_fields(batch[0].body, batch[0].student)),
+            )
+            for batch in batches
+        ]
+
+        def _on_confirm(selections):
+            self._log_review_choice(
+                "Send OA Emails", sum(len(ids) for ids in selections.values()),
+                sum(len(item.students) for item in review_items),
+            )
+            self._run_in_background(
+                "Sending OA Emails",
+                lambda control: self.action_runner.run_oa_emails(
+                    found, signature, self.essential_actions, included_ids_by_key=selections, control=control,
+                ),
+                on_finished=_show_results,
+            )
+
+        def _show_results(summary):
+            message = (
+                f"OA emails complete:\n\n"
+                f"✅ Succeeded: {summary.succeeded}\n"
+                f"❌ Failed: {summary.failed}\n"
+                f"⏭ Skipped: {summary.skipped}\n\n"
+                f"Full details are in the Live Application Log."
+            )
+            _show_run_results(
+                self.right_workspace.winfo_toplevel(), "OA Emails Sent",
+                "OA Emails — Review Needed", message, issue_lines(summary),
+            )
+
+        MultiReviewSendModal(
+            master=self.right_workspace.winfo_toplevel(),
+            title="Send OA Emails",
+            items=review_items,
+            on_confirm=_on_confirm,
+        )
+
     @_with_fresh_roster
     def handle_send_welcome_emails(self) -> None:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
@@ -843,6 +945,7 @@ class AppController:
             group.has_objective_assessment = settings["has_objective_assessment"]
             group.task_emails = settings.get("task_emails", group.task_emails)
             group.sequential_tasks = settings.get("sequential_tasks", group.sequential_tasks)
+            group.oa_email_template_id = settings.get("oa_email_template_id", group.oa_email_template_id)
         self.group_repo.save_groups(self.groups)
         if problems:
             self.activity_logger.log(f"Course settings saved, except: {' '.join(problems)}")
@@ -1452,7 +1555,7 @@ class AppController:
     def _close_session_browsers(self) -> None:
         """The notes page is showing the old caseload, and Mongoose's window
         would lock the Edge profile a new Salesforce login needs."""
-        for name in ("note_writer", "text_sender"):
+        for name in ("note_writer", "text_sender", "essential_actions"):
             sender = getattr(self, name, None)
             if sender is not None:
                 sender.close()

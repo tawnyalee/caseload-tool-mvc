@@ -44,6 +44,7 @@ def fake_compose(monkeypatch):
         if getattr(compose, "error", None):
             raise compose.error
         calls.append((text, commit))
+        return [c for c in text.contact_ids if c in getattr(compose, "missing", ())]
 
     monkeypatch.setattr(mts, "compose_scheduled_text", compose)
     compose.calls = calls
@@ -65,7 +66,7 @@ def test_dry_run_fills_it_in_but_never_schedules(fake_compose):
     what = _NoBrowser(mts.DRY_RUN).send(_student(), "Hi Jane", "Task 4")
     text, commit = fake_compose.calls[0]
     assert commit is False
-    assert (text.course_code, text.contact_id, text.body, text.message_name) == ("D424", "003AAA", "Hi Jane", "Task 4")
+    assert (text.course_code, text.contact_ids, text.body, text.message_name) == ("D424", ["003AAA"], "Hi Jane", "Task 4")
     assert what.startswith("TEST MODE - filled in for") and "not scheduled" in what
 
 
@@ -155,3 +156,46 @@ def test_closing_keeps_mongooses_sign_in(monkeypatch):
     clear.assert_called_once_with(context, mts.MONGOOSE_URL, keep_local_storage=True)
     context.close.assert_called_once()
     assert sender._page is None
+
+
+def test_live_texting_is_automatic_by_default():
+    assert mts.MongooseTextSender().mode == mts.AUTOMATIC
+
+
+def test_one_course_gets_one_message_to_everyone_who_can_be_placed(fake_compose):
+    students = [_student(), _student(texting_contact_id="003BBB", timezone="EST"),
+                _student(texting_contact_id="", first_name="NoId")]
+    outcomes = _NoBrowser(mts.AUTOMATIC).send_group(students, "Hi", "Task 3")
+
+    assert len(fake_compose.calls) == 1
+    assert fake_compose.calls[0][0].contact_ids == ["003AAA", "003BBB"]
+    assert [o.outcome for o in outcomes] == ["success", "success", "skipped"]
+    assert "one message to 2 students" in outcomes[0].detail
+    assert "No texting ID" in outcomes[2].detail
+
+
+def test_a_recipient_mongoose_cant_find_is_skipped_and_the_rest_still_get_it(fake_compose):
+    fake_compose.missing = {"003BBB"}
+    students = [_student(), _student(texting_contact_id="003BBB")]
+    outcomes = _NoBrowser(mts.AUTOMATIC).send_group(students, "Hi", "Name")
+    assert [o.outcome for o in outcomes] == ["success", "skipped"]
+    assert "Not found" in outcomes[1].detail
+
+
+def test_different_courses_are_different_messages(fake_compose):
+    students = [_student(), _student(texting_contact_id="003BBB", course_code="C769")]
+    _NoBrowser(mts.AUTOMATIC).send_group(students, "Hi", "Name")
+    assert sorted(text.course_code for text, _ in fake_compose.calls) == ["C769", "D424"]
+
+
+def test_a_big_class_is_split_into_messages_of_at_most_the_limit(fake_compose):
+    students = [_student(texting_contact_id=f"003{n:03d}") for n in range(mts.MAX_RECIPIENTS + 5)]
+    _NoBrowser(mts.AUTOMATIC).send_group(students, "Hi", "Name")
+    assert [len(text.contact_ids) for text, _ in fake_compose.calls] == [mts.MAX_RECIPIENTS, 5]
+
+
+def test_a_failed_message_fails_each_of_its_students(fake_compose):
+    fake_compose.error = RuntimeError("Schedule button missing")
+    outcomes = _NoBrowser(mts.AUTOMATIC).send_group([_student(), _student(texting_contact_id="003BBB")], "Hi", "N")
+    assert [o.outcome for o in outcomes] == ["failed", "failed"]
+    assert "Schedule button missing" in outcomes[0].detail

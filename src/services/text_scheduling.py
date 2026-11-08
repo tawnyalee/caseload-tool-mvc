@@ -24,7 +24,7 @@ Pure functions with `now` passed in, so every case is unit-testable
 without waiting for a real clock.
 """
 from datetime import datetime, time, timedelta, timezone
-from typing import Optional
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 WINDOW_START = time(10, 0)
@@ -83,3 +83,37 @@ def next_send_time(timezone_label: str, now: Optional[datetime] = None) -> datet
     if candidate >= today_end:
         return datetime.combine(candidate.date() + timedelta(days=1), WINDOW_START, tzinfo=zone)
     return candidate
+
+
+SHARED_SEARCH_DAYS = 3
+
+
+def in_window(moment: datetime) -> bool:
+    """True if `moment` (already in a student's zone) is inside 10 AM-8 PM."""
+    return WINDOW_START <= moment.time() < WINDOW_END
+
+
+def shared_send_time(timezone_labels: List[str], now: Optional[datetime] = None) -> datetime:
+    """One time for a message going to several students (developer,
+    2026-11-08: one Mongoose message per class), inside every student's own
+    10 AM-8 PM window: the earliest such time from now + LEAD_TIME, on a
+    ROUND_TO_MINUTES boundary. For one student it's next_send_time().
+
+    US zones from Hawaii to Eastern overlap for five hours every day (10 AM
+    Hawaii to 8 PM Eastern), so a time is always found for them. Raises
+    NoTimeZoneError if a label is unusable, and ValueError if no shared time
+    exists, so the caller can split the message up."""
+    zones = [student_zone(label) for label in timezone_labels]
+    if not zones:
+        raise ValueError("No students to schedule for")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+
+    candidate = _round_up(now.astimezone(timezone.utc) + LEAD_TIME)
+    last = candidate + timedelta(days=SHARED_SEARCH_DAYS)
+    while candidate <= last:
+        if all(in_window(candidate.astimezone(zone)) for zone in zones):
+            return candidate.astimezone(zones[0])
+        candidate += timedelta(minutes=ROUND_TO_MINUTES)
+    raise ValueError("No time is inside 10 AM-8 PM for every one of these students")

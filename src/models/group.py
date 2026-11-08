@@ -19,6 +19,7 @@ class Group:
         task_count: int = 0,
         task_emails: Optional[Dict[str, dict]] = None,
         sequential_tasks: bool = True,
+        oa_email_template_id: str = "",
     ):
         # If a group_id is passed (e.g., loaded from database/file), use it.
         # Otherwise, generate a brand new unique ID.
@@ -52,6 +53,9 @@ class Group:
         # lowest task not yet submitted. Both sets are kept, so switching
         # back and forth never mixes them up.
         self.sequential_tasks = sequential_tasks
+        # The template Send OA Emails uses for a student who passed this
+        # course's OA (developer, 2026-11-04; oa_emails.py). By ID, never name.
+        self.oa_email_template_id = oa_email_template_id or ""
 
     def task_email_rows(self) -> List[int]:
         """The task numbers with an email row. In order: each task passed,

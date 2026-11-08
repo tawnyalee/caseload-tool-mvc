@@ -2,7 +2,8 @@
 """Drives Mongoose's web app to schedule one text to one student.
 
 The route is the one the developer recorded scheduling a real text with
-`playwright codegen` (2026-10-28): switch to the student's course department,
+`playwright codegen` (2026-10-28; again 2026-11-08 with three recipients in
+one message, each added through the same search box): switch to the student's course department,
 Tools > Scheduled Messages > Create, find the recipient, type the message,
 Preview > Next, Message Name, date/time, Schedule. Pieces Mongoose is
 known to need come from the reference project (ashejim/caseload-tool,
@@ -19,13 +20,13 @@ text_message.py), which the developer has used daily:
   - date/time: three <select>s (hours, minutes, AM/PM with values "true"/
     "false") and a date box that only takes a typed date on Enter
 
-Nothing here clicks the final Schedule button unless `commit=True`: the first
-live runs stop there so the professor can check what Mongoose shows.
-Not wired into the app's TextSender yet.
+The final Schedule button is clicked only with `commit=True` (live runs, since
+2026-11-08); test mode stops before it. After the click, the form must close,
+or the text counts as failed.
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 LOGGED_IN_SELECTOR = ".department-name"
 RECIPIENT_SEARCH_LABEL = "Search by First, Last, ID, or Mobile"
@@ -39,7 +40,7 @@ class NoMongooseMatch(RuntimeError):
 @dataclass
 class ScheduledText:
     course_code: str          # Mongoose department, e.g. "D424"
-    contact_id: str           # Salesforce Contact Id ("003...")
+    contact_ids: List[str]    # Salesforce Contact Ids ("003..."): one message, every recipient
     body: str
     message_name: str         # Mongoose's "Message Name" for the schedule
     send_at: datetime         # in the department's (team's) time zone, as Mongoose expects
@@ -130,6 +131,10 @@ def add_recipient(page, contact_id: str, timeout_ms: int = 10_000) -> None:
         options.first.wait_for(state="visible", timeout=timeout_ms)
     except PlaywrightTimeoutError:
         page.keyboard.press("Escape")
+        try:
+            box.fill("")  # so the next recipient's search starts empty
+        except Exception:
+            pass
         raise NoMongooseMatch(
             "Not found in this Mongoose department (they may have opted out of texts)"
         ) from None
@@ -161,16 +166,52 @@ def fill_schedule(page, send_at: datetime) -> None:
     page.wait_for_timeout(300)
 
 
+SCHEDULE_CONFIRM_TIMEOUT_MS = 20_000
+
+
+def confirm_scheduled(page, name_box, timeout_ms: int = SCHEDULE_CONFIRM_TIMEOUT_MS) -> None:
+    """After Schedule, Mongoose closes the schedule form. If the form is still
+    up (an error or warning Mongoose showed instead), the text is reported as
+    failed rather than assumed scheduled."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    wait_for_loader(page)
+    try:
+        name_box.wait_for(state="hidden", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        raise RuntimeError("Mongoose didn't close the schedule form after Schedule, so it may not be scheduled") from None
+
+
+def add_recipients(page, contact_ids: List[str], say: Callable[[str], None] = _noop) -> List[str]:
+    """Adds each recipient to the one message, the way the developer recorded
+    it (2026-11-08): search, pick, then the next search in the same box.
+    Returns the Contact Ids that weren't found, so those students can be
+    listed while the rest still get the text. Raises NoMongooseMatch if
+    nobody was found."""
+    missing = []
+    for position, contact_id in enumerate(contact_ids, start=1):
+        if len(contact_ids) > 1:
+            say(f"Finding student {position} of {len(contact_ids)}...")
+        try:
+            add_recipient(page, contact_id)
+        except NoMongooseMatch:
+            missing.append(contact_id)
+    if len(missing) == len(contact_ids):
+        raise NoMongooseMatch("Not found in this Mongoose department (they may have opted out of texts)")
+    return missing
+
+
 def compose_scheduled_text(page, text: ScheduledText, commit: bool = False,
-                           say: Callable[[str], None] = _noop) -> None:
-    """Fills in one scheduled text. Clicks the final Schedule only if
-    `commit`; otherwise it stops with everything filled in for review."""
+                           say: Callable[[str], None] = _noop) -> List[str]:
+    """Fills in one scheduled text to every recipient. Clicks the final
+    Schedule only if `commit`; otherwise it stops with everything filled in
+    for review. Returns the Contact Ids that weren't found in the department."""
     say(f"Switching to {text.course_code}...")
     switch_department(page, text.course_code)
     say("Opening a new scheduled message...")
     open_new_scheduled_message(page)
     say("Finding the student...")
-    add_recipient(page, text.contact_id)
+    missing = add_recipients(page, text.contact_ids, say)
     say("Typing the message...")
     set_message(page, text.body)
     click(page.get_by_role("button", name="Preview"), page)
@@ -182,6 +223,8 @@ def compose_scheduled_text(page, text: ScheduledText, commit: bool = False,
     fill_schedule(page, text.send_at)
     if commit:
         click(page.get_by_role("button", name="Schedule", exact=True), page)
+        confirm_scheduled(page, name_box)
         say("Scheduled.")
     else:
         say("Stopped before Schedule - nothing was sent.")
+    return missing

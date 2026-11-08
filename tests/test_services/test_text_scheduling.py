@@ -90,3 +90,29 @@ def test_every_schedule_lands_between_9am_and_9pm_under_every_reading(label):
                 assert 9 <= local_hour < 21, f"{label} read as {reading}: {result.astimezone(reading)} (now={now})"
             checked += 1
     assert checked == len(_DAYS) * 96
+
+
+from src.services.text_scheduling import in_window, shared_send_time, student_zone
+
+
+def test_one_student_shared_time_is_their_own_next_send_time():
+    start = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    for quarter_hours in range(4 * 24 * 3):
+        now = start + timedelta(minutes=15 * quarter_hours)
+        for label in ("EST", "CST", "MST", "PST", "HST"):
+            assert shared_send_time([label], now) == next_send_time(label, now)
+
+
+def test_a_shared_time_is_inside_every_students_window_hawaii_to_eastern():
+    labels = ["EST", "CST", "MST", "PST", "AKST", "HST"]
+    start = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    for quarter_hours in range(4 * 24 * 3):
+        now = start + timedelta(minutes=15 * quarter_hours)
+        when = shared_send_time(labels, now)
+        assert when >= now
+        assert all(in_window(when.astimezone(student_zone(label))) for label in labels)
+
+
+def test_a_shared_time_with_an_unusable_zone_raises():
+    with pytest.raises(NoTimeZoneError):
+        shared_send_time(["EST", ""])

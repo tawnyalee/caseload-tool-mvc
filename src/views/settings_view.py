@@ -23,6 +23,8 @@ from src.services.task_emails import support_label
 from src.views.template_editor_modal import TemplateEditorModal
 
 NO_EMAIL = "(no email)"
+# The OA passed email's row number for New/Edit, apart from every task row.
+OA_ROW = 0
 NO_DEFAULT_SIGNATURE = "(none)"
 TASK_EMAIL_GREETING_NOTE = (
     "For any email set for task passed, the first name or preferred name will be used as a greeting. "
@@ -47,6 +49,9 @@ class _GroupCard(ctk.CTkFrame):
         self._email_values: Dict[str, dict] = {k: dict(v) for k, v in group.task_emails.items()}
         self._email_widgets: Dict[int, ctk.CTkOptionMenu] = {}
         self._widgets_sequential = group.sequential_tasks  # which kind of rows are on screen
+        # Send OA Emails' template for this course (developer, 2026-11-04).
+        self._oa_template_id = group.oa_email_template_id
+        self._oa_widget: Optional[ctk.CTkOptionMenu] = None
 
         ctk.CTkLabel(self, text=group.name, font=ctk.CTkFont(size=14, weight="bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 4)
@@ -112,6 +117,11 @@ class _GroupCard(ctk.CTkFrame):
 
     def choose_template(self, task_number: int, template_id: str) -> None:
         self._capture_email_rows()
+        if task_number == OA_ROW:
+            self._oa_template_id = template_id
+            self._oa_widget = None  # so the rebuild keeps this choice
+            self._rebuild_email_rows()
+            return
         key = Group.task_email_key(task_number, self._widgets_sequential)
         row = self._email_values.setdefault(key, {"subject": DEFAULT_TASK_EMAIL_SUBJECT})
         row["template_id"] = template_id
@@ -119,7 +129,8 @@ class _GroupCard(ctk.CTkFrame):
         self._rebuild_email_rows()
 
     def _open_editor(self, task_number: int, is_new: bool) -> None:
-        template_id = None if is_new else self._choice_to_id.get(self._email_widgets[task_number].get())
+        widget = self._oa_widget if task_number == OA_ROW else self._email_widgets[task_number]
+        template_id = None if is_new else self._choice_to_id.get(widget.get())
         if self.open_template_editor:
             self.open_template_editor(self, task_number, template_id)
 
@@ -146,6 +157,8 @@ class _GroupCard(ctk.CTkFrame):
         )
 
     def _capture_email_rows(self) -> None:
+        if self._oa_widget is not None:
+            self._oa_template_id = self._choice_to_id.get(self._oa_widget.get(), "")
         for number, dropdown in self._email_widgets.items():
             key = Group.task_email_key(number, self._widgets_sequential)
             saved = self._email_values.get(key, {})
@@ -159,10 +172,13 @@ class _GroupCard(ctk.CTkFrame):
         for widget in self.emails_frame.winfo_children():
             widget.destroy()
         self._email_widgets = {}
+        self._oa_widget = None
         shape = self._current_shape()
         sequential = shape.sequential_tasks
         self._widgets_sequential = sequential
         rows = shape.task_email_rows()
+        if shape.is_course and shape.has_objective_assessment:
+            self._build_oa_row()
         if not rows:
             return
 
@@ -196,6 +212,28 @@ class _GroupCard(ctk.CTkFrame):
             ).grid(row=i, column=4, sticky="w", padx=(6, 0), pady=2)
             self._email_widgets[number] = dropdown
 
+    def _build_oa_row(self) -> None:
+        """Below the task rows: the email Send OA Emails sends a student who
+        passed this course's OA."""
+        frame = ctk.CTkFrame(self.emails_frame, fg_color="transparent")
+        frame.grid(row=100, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ctk.CTkLabel(frame, text="OA passed email:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        dropdown = ctk.CTkOptionMenu(frame, values=[NO_EMAIL] + list(self._choice_to_id), width=135)
+        dropdown.set(self._id_to_choice.get(self._oa_template_id, NO_EMAIL))
+        dropdown.grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ctk.CTkButton(frame, text="➕ New", width=60, command=lambda: self._open_editor(OA_ROW, True)).grid(
+            row=0, column=2, padx=2, pady=2
+        )
+        ctk.CTkButton(frame, text="✏️ Edit", width=60, command=lambda: self._open_editor(OA_ROW, False)).grid(
+            row=0, column=3, padx=2, pady=2
+        )
+        ctk.CTkLabel(frame, text="Subject: Congrats!", text_color=("gray40", "gray60")).grid(
+            row=0, column=4, sticky="w", padx=(6, 0), pady=2
+        )
+        self._oa_widget = dropdown
+
     def read(self) -> Dict:
         """The card's values, plus a list of problems (empty = valid)."""
         is_course = self.is_course_var.get() == "on"
@@ -220,6 +258,7 @@ class _GroupCard(ctk.CTkFrame):
             "task_count": task_count if has_tasks else self.group.task_count,
             "has_objective_assessment": is_course and self.has_oa_var.get() == "on",
             "sequential_tasks": self.sequential_var.get() == "on",
+            "oa_email_template_id": self._oa_template_id,
             "problems": problems,
         }
 

@@ -15,7 +15,15 @@ from src.services.task_emails import (
     batches_for_review, build_task_email, html_to_plain_text, parse_look_back_days, passed_in_look_back,
 )
 from src.services.task_utils import passed_task_number
-from src.services.text_sender import FakeTextSender, TextSkipped
+from src.services.text_sender import FakeTextSender, TextSender, TextSkipped
+
+
+def _mock_text_sender():
+    """A mock whose send_group() is the real one-send()-each default, so
+    tests can set send's side effects."""
+    sender = MagicMock()
+    sender.send_group.side_effect = lambda *args: TextSender.send_group(sender, *args)
+    return sender
 
 MONDAY = date(2026, 11, 2)
 
@@ -237,7 +245,7 @@ def test_notes_share_one_run_even_when_an_email_run_fails_partway():
 
 def test_an_email_and_text_action_still_writes_the_note_when_the_text_is_skipped():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     runner.text_sender.send.side_effect = TextSkipped("Nobody by that ID in this department")
     action = Action(
         name="Welcome", is_email=True, is_text=True, template_id="T3", email_subject="Hi", email_signature="Sig",
@@ -264,7 +272,7 @@ def _email_note_and_text_action():
 
 def test_the_note_is_saved_before_the_text_is_tried():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     notes_when_texting = []
     runner.text_sender.send.side_effect = lambda *_: notes_when_texting.append(len(runner.note_writer.written)) or "ok"
 
@@ -275,7 +283,7 @@ def test_the_note_is_saved_before_the_text_is_tried():
 
 def test_mongoose_failing_to_open_still_sends_the_email_and_writes_the_note():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     runner.text_sender.ensure_ready.side_effect = RuntimeError("Mongoose login wasn't finished")
 
     summary = runner.run(_email_note_and_text_action(), group_name="D424")
@@ -289,7 +297,7 @@ def test_mongoose_failing_to_open_still_sends_the_email_and_writes_the_note():
 
 def test_mongoose_failing_to_open_lists_a_text_only_run_as_skipped():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     runner.text_sender.ensure_ready.side_effect = RuntimeError("Mongoose login wasn't finished")
     action = Action(name="Reminder", is_text=True, text_body="Hello")
 
@@ -300,7 +308,7 @@ def test_mongoose_failing_to_open_lists_a_text_only_run_as_skipped():
 
 def test_mongoose_only_opens_after_every_students_email_and_note():
     runner = _runner([_student(), _student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     notes_when_opened = []
     runner.text_sender.ensure_ready.side_effect = lambda: notes_when_opened.append(len(runner.note_writer.written))
 
@@ -312,7 +320,7 @@ def test_mongoose_only_opens_after_every_students_email_and_note():
 
 def test_a_batch_finishes_every_actions_emails_and_notes_before_any_text():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     notes_when_opened = []
     runner.text_sender.ensure_ready.side_effect = lambda: notes_when_opened.append(len(runner.note_writer.written))
     action = _email_note_and_text_action()
@@ -326,7 +334,7 @@ def test_a_batch_finishes_every_actions_emails_and_notes_before_any_text():
 
 def test_stopping_during_the_emails_leaves_the_texts_unsent_and_listed():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     control = RunControl()
     runner.email_sender.send = MagicMock(side_effect=lambda *a, **k: control.request_stop())
 
@@ -338,7 +346,7 @@ def test_stopping_during_the_emails_leaves_the_texts_unsent_and_listed():
 
 def test_a_text_over_the_limit_is_skipped_and_never_reaches_mongoose():
     runner = _runner([_student()])
-    runner.text_sender = MagicMock()
+    runner.text_sender = _mock_text_sender()
     action = Action(
         name="Check in", is_text=True, template_id=None, text_body="{{student_name}}" + "x" * 148,
     )
