@@ -1029,6 +1029,7 @@ class AppController:
             return
 
         # 1. Update memory state for scenarios_raw
+        action_data = None
         if old_name in self.scenarios_raw:
             action_data = self.scenarios_raw.pop(old_name)
             if isinstance(action_data, dict):
@@ -1045,11 +1046,9 @@ class AppController:
 
         self.group_repo.save_groups(self.groups)
 
-        # 3. Persist via ActionRepository
-        if hasattr(self.action_repo, "rename_action"):
-            self.action_repo.rename_action(old_name, new_name)
-        elif hasattr(self.action_repo, "save_scenarios"):
-            self.action_repo.save_scenarios(self.scenarios_raw)
+        # 3. Persist via ActionRepository (matches the saved record by ID)
+        if action_data is not None:
+            self.action_repo.save_action(action_data)
 
         # 4. Refresh UI State safely
         if self.nav_panel:
@@ -1319,6 +1318,16 @@ class AppController:
 
         # 1. Manage Group Welcome Email Conflicts & Scenario Linking
         target_group = next((g for g in self.groups if g.name == group_name), None)
+
+        # A rename: groups list actions by name, so swap the saved name (found
+        # by this action's ID) for the new one, in place. Appending alone left
+        # the old name listed beside the new one.
+        previous = next((a for a in self.action_repo.load_actions() if a.id == action_id), None)
+        if previous and previous.name != action_name:
+            for group in self.groups:
+                if previous.name in group.scenarios:
+                    idx = group.scenarios.index(previous.name)
+                    group.scenarios[idx] = action_name
 
         if target_group:
             # Link action name to group scenarios list for UI rendering
