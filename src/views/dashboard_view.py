@@ -5,6 +5,10 @@ from src.services import html_richtext as rt
 from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, get_signature_names_or_fallback
 from src.views.merge_field_picker import create_merge_field_menu
 
+OA_DIRECT_SAVE_WARNING = (
+    'This works best when "Save notes directly to Salesforce (faster)" is on in ⚙ Settings.'
+)
+
 
 class DashboardView(ctk.CTkFrame):
     """Four sections, top to bottom: Welcome Emails, Task Emails, Run Action
@@ -83,6 +87,15 @@ class DashboardView(ctk.CTkFrame):
             ),
             font=ctk.CTkFont(size=11),
             text_color="gray",
+            wraplength=500,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 2))
+        # Developer, 2026-11-17: the form route is the weaker one.
+        ctk.CTkLabel(
+            self.scrollable_container,
+            text=OA_DIRECT_SAVE_WARNING,
+            font=ctk.CTkFont(size=11),
+            text_color=("#9a6700", "#d4a72c"),
             wraplength=500,
             justify="left",
         ).pack(anchor="w", padx=20, pady=(0, 10))
@@ -300,4 +313,5 @@ class DashboardView(ctk.CTkFrame):
 
     def _on_run_batch_clicked(self) -> None:
         if self.controller and hasattr(self.controller, "handle_open_batch_runner"):
-            self.controller.handle_open_batch_runner()
+            # A batch's Task Emails step uses the same Days to look back box.
+            self.controller.handle_open_batch_runner(self.task_days_entry.get())

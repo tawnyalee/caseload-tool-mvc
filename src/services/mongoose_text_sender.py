@@ -1,11 +1,12 @@
 # src/services/mongoose_text_sender.py
 """The app's real TextSender: schedules each text in Mongoose.
 
-One browser window for the whole app session (ensure_ready opens it, close
-ends it on Refresh Caseload or when the app closes), on the app's saved Edge
-profile, so the professor only logs in when Mongoose asks. It stays visible
-on purpose. Driving it all
-happens on the BackgroundWorker thread, since Playwright's sync API must stay
+One tab of the app's login window (browser_launch.LoginWindow) for the
+whole app session: opened right after the Salesforce login (open_login_tab,
+wait_for_login) or by ensure_ready, closed with the app (close). It uses
+the app's saved Edge profile, so the professor only logs in when Mongoose
+asks. It stays visible on purpose. Driving it all happens on the
+BackgroundWorker thread, since Playwright's sync API must stay
 on the thread that started it.
 
 One message per class (developer, 2026-11-08; mongoose_compose.py does the
@@ -29,7 +30,7 @@ from typing import Dict, List, Optional
 
 from src.models.student import Student
 from src.services.browser_launch import (
-    acquire_playwright, clear_cached_pages, launch_login_context, release_playwright,
+    acquire_playwright, clear_cached_pages, login_window, release_playwright,
 )
 from src.services.mongoose_browser_session import MONGOOSE_URL
 from src.services.mongoose_compose import (
@@ -69,23 +70,61 @@ class MongooseTextSender(TextSender):
             raise ValueError(f"Unknown texting mode: {mode}")
         self.mode = mode
         self._playwright = None
-        self._context = None
         self._page = None
 
-    def ensure_ready(self) -> None:
-        if self._page is not None and not self._page.is_closed():
-            return
-        self.close()  # the professor may have closed the window between runs
+    def _is_open(self) -> bool:
+        return self._page is not None and not self._page.is_closed()
+
+    def open_login_tab(self) -> bool:
+        """Opens Mongoose in a tab of the app's login window, in front,
+        without waiting for the login: the app calls this right after the
+        Salesforce login (developer, 2026-11-18), then wait_for_login() once
+        the roster has loaded. Returns False, doing nothing, if Mongoose is
+        already open."""
+        if self._is_open():
+            return False
+        self.close()  # the professor may have closed the tab between runs
         from playwright.sync_api import Error as PlaywrightError
 
         self._playwright = acquire_playwright()
         try:
-            self._context = launch_login_context(self._playwright, headless=False)
-            self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+            self._page = login_window().new_tab(self._playwright, headless=False)
+            self._page.goto(MONGOOSE_URL)
+            return True
+        except PlaywrightError:
+            self.close()
+            raise RuntimeError("Mongoose couldn't be opened.") from None
+        except Exception:
+            self.close()
+            raise
+
+    def wait_for_login(self) -> None:
+        """Waits up to 5 minutes for the professor to log in to the open
+        Mongoose tab. Raises RuntimeError if it isn't open, is closed first,
+        or time runs out."""
+        from playwright.sync_api import Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+
+        if not self._is_open():
+            raise RuntimeError("Mongoose isn't open.")
+        try:
+            self._page.wait_for_selector(LOGGED_IN_SELECTOR, state="visible", timeout=LOGIN_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            raise RuntimeError("Mongoose login wasn't finished within 5 minutes.") from None
+        except PlaywrightError:
+            self.close()
+            raise RuntimeError("The Mongoose tab was closed before login finished.") from None
+
+    def ensure_ready(self) -> None:
+        if self._is_open():
+            return
+        from playwright.sync_api import Error as PlaywrightError
+
+        self.open_login_tab()
+        try:
             self._go_home()
         except PlaywrightError:
             self.close()
-            raise RuntimeError("Mongoose couldn't be opened, or its window was closed before login finished.") from None
+            raise RuntimeError("Mongoose couldn't be opened, or its tab was closed before login finished.") from None
         except Exception:
             self.close()
             raise
@@ -241,20 +280,19 @@ class MongooseTextSender(TextSender):
 
     def close(self) -> None:
         """Clears Mongoose's cached pages from the profile, keeping its
-        sign-in, then closes the window. Called on Refresh Caseload and when
-        the app closes, on the background thread. Never raises."""
-        if self._context is not None:
-            try:
-                clear_cached_pages(self._context, MONGOOSE_URL, keep_local_storage=True)
-            except Exception:
-                pass
-            try:
-                self._context.close()
-            except Exception:
-                pass
+        sign-in, then closes its tab (and the login window, if that was the
+        last tab). Called when the app closes, on the background thread.
+        Never raises."""
+        if self._page is not None:
+            if not self._page.is_closed():
+                try:
+                    clear_cached_pages(self._page.context, MONGOOSE_URL, keep_local_storage=True)
+                except Exception:
+                    pass
+            login_window().close_tab(self._page)
         if self._playwright is not None:
             try:
                 release_playwright()
             except Exception:
                 pass
-        self._playwright = self._context = self._page = None
+        self._playwright = self._page = None

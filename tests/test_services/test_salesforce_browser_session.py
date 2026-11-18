@@ -92,3 +92,63 @@ def test_looks_like_a_different_host_false_on_same_host():
         "https://srm.lightning.force.com/lightning/n/Caseload_App_Page",
         "https://srm.lightning.force.com/lightning/n/Caseload_App_Page?x=1",
     ) is False
+
+
+# --- One shared login window (developer, 2026-11-18) ---
+
+from src.services.browser_launch import login_window
+
+
+def _named_page(tmp_path, name, body):
+    path = tmp_path / f"{name}.html"
+    path.write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+    return f"file:///{path.as_posix()}"
+
+
+def test_the_tab_opened_after_login_keeps_the_window_open_once_the_login_tab_closes(tmp_path):
+    login_url = _page(tmp_path, '<button title="Download">Download</button>')
+    mongoose_url = _named_page(tmp_path, "mongoose", "Mongoose sign-in")
+    opened = []
+
+    with sync_playwright() as playwright:
+        def open_mongoose():
+            page = login_window().new_tab(playwright, headless=True)
+            page.goto(mongoose_url)
+            opened.append(page)
+
+        sbs.log_in_interactively(playwright, login_url, '[title="Download"]', headless=True, after_login=open_mongoose)
+
+        assert sbs.has_session()
+        assert login_window().is_open
+        assert [p.url for p in login_window()._context.pages] == [mongoose_url]  # only Mongoose is left
+
+        login_window().close_tab(opened[0])
+        assert not login_window().is_open  # the window went with its last tab
+
+
+def test_a_later_login_opens_beside_an_open_tab_instead_of_needing_it_closed(tmp_path):
+    """Edge allows one window on the saved profile: before 2026-11-18 a new
+    Salesforce login had to close Mongoose first."""
+    login_url = _page(tmp_path, '<button title="Download">Download</button>')
+
+    with sync_playwright() as playwright:
+        mongoose = login_window().new_tab(playwright, headless=True)
+
+        sbs.log_in_interactively(playwright, login_url, '[title="Download"]', headless=True)
+
+        assert sbs.has_session()
+        assert not mongoose.is_closed()
+        login_window().close()
+
+
+def test_a_failing_after_login_step_doesnt_undo_the_login(tmp_path):
+    login_url = _page(tmp_path, '<button title="Download">Download</button>')
+
+    def broken():
+        raise RuntimeError("Mongoose couldn't be opened.")
+
+    with sync_playwright() as playwright:
+        sbs.log_in_interactively(playwright, login_url, '[title="Download"]', headless=True, after_login=broken)
+
+    assert sbs.has_session()
+    assert not login_window().is_open

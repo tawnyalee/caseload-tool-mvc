@@ -34,16 +34,21 @@ from src.services.essential_action_form import fill_essential_action_form
 from src.services import oa_emails
 from src.services.merge_fields import render_merge_fields
 from src.services import salesforce_browser_session
-from src.services.browser_launch import playwright_session
+from src.services.browser_launch import login_window, playwright_session
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
 )
 from src.services.outlook_signature_provider import NO_SIGNATURES_FOUND, LocalOutlookSignatureProvider
-from src.services.action_runner import ActionRunner, RunControl
+from src.services.action_runner import ActionRunner, BuiltInRun, RunControl
+from src.services.built_in_steps import (
+    BUILT_IN_GROUP_LABEL, BUILT_IN_STEPS, OA_EMAILS, TASK_EMAILS, WELCOME_EMAILS, is_built_in,
+)
 from src.services.background_worker import BackgroundWorker, UiDispatcher
 from src.views.dashboard_view import DashboardView
 from src.views.first_steps_window import FirstStepsWindow
-from src.views.loading_view import LOADING_CASELOAD_TEXT, LoadingView
+from src.views.loading_view import (
+    LOADING_CASELOAD_TEXT, LOADING_WITH_MONGOOSE_TEXT, MONGOOSE_LOGIN_TEXT, LoadingView,
+)
 from src.views.batch_run_modal import BatchRunModal
 from src.views.review_send_modal import ReviewSendModal
 from src.views.multi_review_send_modal import MultiReviewSendModal, ReviewItem as MultiReviewItem
@@ -98,6 +103,57 @@ def _show_run_results(master, clean_title: str, issues_title: str, message: str,
         RunSummaryModal(master, title=issues_title, message=message, issue_lines=lines)
     else:
         messagebox.showinfo(clean_title, message)
+
+
+def _task_review_items(groups, task_emails, prefix: str = ""):
+    """One review section per distinct task email, so each can be read
+    before it goes out, plus which course each section's key belongs to.
+    Used by Send Task Emails and by a batch's Task Emails step. Module-level,
+    like _show_run_results, so tests on a MagicMock controller reach it."""
+    review_items = []
+    group_of_item = {}
+    for group in [g for g in groups if g.id in task_emails]:
+        for batch in batches_for_review(task_emails[group.id]):
+            first = batch[0]
+            key = f"{prefix}{group.id}:{len(review_items)}"
+            group_of_item[key] = group.id
+            review_items.append(MultiReviewItem(
+                key=key,
+                label=f"{group.name} — Passed Task {first.passed_task} — {first.subject} — {first.email_name}",
+                students=[t.student for t in batch],
+                student_details={t.student.salesforce_id: f"Task {t.passed_task}" for t in batch},
+                preview=first.preview(),
+            ))
+    return review_items, group_of_item
+
+def _oa_review_items(found, prefix: str = ""):
+    """One review section per course's OA email, keyed by prefix +
+    OaEmail.email_name. Used by Send OA Emails and a batch's OA step."""
+    return [
+        MultiReviewItem(
+            key=f"{prefix}{batch[0].email_name}",
+            label=f"{batch[0].row.course_code} — Passed OA — {batch[0].subject} — {batch[0].email_name}",
+            students=[e.student for e in batch],
+            preview=oa_emails.html_to_plain_text(render_merge_fields(batch[0].body, batch[0].student)),
+        )
+        for batch in oa_emails.batches_for_review(found)
+    ]
+
+def _welcome_review_items(groups, action_runner, actions_by_id, prefix: str = ""):
+    """One review section per group whose welcome Action exists, keyed
+    by prefix + group id. Used by Send Welcome Emails and a batch's
+    Welcome Emails step."""
+    review_items = []
+    for group in groups:
+        if not (group.welcome_action_id and group.welcome_action_id in actions_by_id):
+            continue
+        action = actions_by_id[group.welcome_action_id]
+        students = action_runner.get_matching_students(action)
+        review_items.append(MultiReviewItem(
+            key=f"{prefix}{group.id}", label=f"{group.name} — {action.name}", students=students,
+            preview=action_runner.preview_for(action, students[0]) if students else "",
+        ))
+    return review_items
 
 
 class PlaceholderView(ctk.CTkFrame):
@@ -387,24 +443,56 @@ class AppController:
         with playwright_session() as playwright:
             salesforce_browser_session.log_in_interactively(
                 playwright, target_url=CASELOAD_APP_URL, logged_in_selector=EXPORT_BUTTON_SELECTOR,
+                after_login=self._open_mongoose_tab,
             )
         self.activity_logger.log("Logged in to Salesforce")
+
+    def _open_mongoose_tab(self) -> None:
+        """Right after the Salesforce login, Mongoose opens in front in the
+        same window (developer, 2026-11-18: every launch, since nearly every
+        instructor texts; closing the tab skips it). The login is waited for
+        once the roster has loaded (_wait_for_mongoose_login)."""
+        try:
+            if self.text_sender.open_login_tab():
+                self._mongoose_login_pending = True
+                self.activity_logger.log("Opened Mongoose for login")
+        except Exception as exc:
+            self.activity_logger.log_failure(f"[MONGOOSE NOT OPENED] {exc}", exc)
+
+    def _wait_for_mongoose_login(self) -> None:
+        """Waits for the Mongoose login _open_mongoose_tab started, if any. A
+        skipped or unfinished login is only logged: texts ask again."""
+        if not getattr(self, "_mongoose_login_pending", False):
+            return
+        self._mongoose_login_pending = False
+        self._set_loading_status(MONGOOSE_LOGIN_TEXT)
+        try:
+            self.text_sender.wait_for_login()
+            self.activity_logger.log("Logged in to Mongoose")
+        except Exception as exc:
+            self.activity_logger.log(f"[MONGOOSE NOT LOGGED IN] {exc} Texts will ask for the login when they're sent.")
 
     def _load_caseload_logging_in_if_needed(self):
         """Refreshes the roster, opening the login window first if nobody has
         logged in yet this app session, or again if the login has expired."""
         if not salesforce_browser_session.has_session():
             self._log_in_to_salesforce()
-        self._set_loading_status(LOADING_CASELOAD_TEXT)
         try:
-            students = self.student_data_provider.refresh()
-        except salesforce_browser_session.SessionExpiredError:
-            self.activity_logger.log("Salesforce login expired - asking to log in again")
-            salesforce_browser_session.clear_session()
-            self._log_in_to_salesforce()
-            students = self.student_data_provider.refresh()
-        self._roster_loaded_at = time.time()
-        return students
+            self._set_loading_status(
+                LOADING_WITH_MONGOOSE_TEXT if getattr(self, "_mongoose_login_pending", False) else LOADING_CASELOAD_TEXT
+            )
+            try:
+                students = self.student_data_provider.refresh()
+            except salesforce_browser_session.SessionExpiredError:
+                self.activity_logger.log("Salesforce login expired - asking to log in again")
+                salesforce_browser_session.clear_session()
+                self._log_in_to_salesforce()
+                students = self.student_data_provider.refresh()
+            self._roster_loaded_at = time.time()
+            return students
+        finally:
+            # The roster loads while the professor logs in to Mongoose.
+            self._wait_for_mongoose_login()
 
     # region View Management
     def _init_views(self) -> None:
@@ -584,21 +672,7 @@ class AppController:
                 "Task Emails", "No courses are set up for task emails yet. Add task counts in ⚙ Settings."
             )
             return
-        # One section per distinct email, so each can be read before it goes out.
-        review_items = []
-        group_of_item = {}
-        for group in courses:
-            for batch in batches_for_review(task_emails[group.id]):
-                first = batch[0]
-                key = f"{group.id}:{len(review_items)}"
-                group_of_item[key] = group.id
-                review_items.append(MultiReviewItem(
-                    key=key,
-                    label=f"{group.name} — Passed Task {first.passed_task} — {first.subject} — {first.email_name}",
-                    students=[t.student for t in batch],
-                    student_details={t.student.salesforce_id: f"Task {t.passed_task}" for t in batch},
-                    preview=first.preview(),
-                ))
+        review_items, group_of_item = _task_review_items(self.groups, task_emails)
         if not review_items:
             problems = [
                 f"{t.student.full_name}: {t.problem}" for group in courses for t in task_emails[group.id]
@@ -686,20 +760,11 @@ class AppController:
 
     def _review_oa_emails(self, found, signature: str) -> None:
         problems = [f"{e.student.full_name} ({e.row.course_code}): {e.problem}" for e in found if e.problem]
-        batches = oa_emails.batches_for_review(found)
-        if not batches:
+        review_items = _oa_review_items(found)
+        if not review_items:
             lines = ["There are no OA emails to send."] if not found else ["None of the OA passes can be emailed:"]
             messagebox.showinfo("Send OA Emails", "\n".join(lines + problems))
             return
-        review_items = [
-            MultiReviewItem(
-                key=batch[0].email_name,
-                label=f"{batch[0].row.course_code} — Passed OA — {batch[0].subject} — {batch[0].email_name}",
-                students=[e.student for e in batch],
-                preview=oa_emails.html_to_plain_text(render_merge_fields(batch[0].body, batch[0].student)),
-            )
-            for batch in batches
-        ]
 
         def _on_confirm(selections):
             self._log_review_choice(
@@ -739,15 +804,7 @@ class AppController:
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
         actions_by_id = {a.id: a for a in self.action_repo.load_actions()}
-        eligible_groups = [g for g in self.groups if g.welcome_action_id and g.welcome_action_id in actions_by_id]
-        review_items = []
-        for group in eligible_groups:
-            action = actions_by_id[group.welcome_action_id]
-            students = self.action_runner.get_matching_students(action)
-            review_items.append(MultiReviewItem(
-                key=group.id, label=f"{group.name} — {action.name}", students=students,
-                preview=self.action_runner.preview_for(action, students[0]) if students else "",
-            ))
+        review_items = _welcome_review_items(self.groups, self.action_runner, actions_by_id)
 
         def _on_confirm(selections):
             self._log_review_choice(
@@ -838,7 +895,9 @@ class AppController:
             on_confirm=_on_confirm,
         )
 
-    def handle_open_batch_runner(self) -> None:
+    def handle_open_batch_runner(self, task_days_text: str = "") -> None:
+        """`task_days_text` is the Dashboard's "Days to look back" box, for a
+        batch's Task Emails step (developer, 2026-11-17: same as the button)."""
         if self._is_busy_and_told_user():
             return
         main_win = self.right_workspace.winfo_toplevel()
@@ -847,7 +906,7 @@ class AppController:
             master=main_win,
             actions=actions,
             groups=self.groups,
-            on_run=self._handle_run_batch,
+            on_run=lambda steps, group_names: self._handle_run_batch(steps, group_names, task_days_text),
             saved_batches=self.saved_batch_repo.load_batches(),
             on_save_batch=self._handle_save_batch,
             on_delete_batch=self._handle_delete_batch,
@@ -860,28 +919,92 @@ class AppController:
         self.saved_batch_repo.delete_batch(batch_id)
 
     @_with_fresh_roster
-    def _handle_run_batch(self, actions, group_names) -> None:
+    def _handle_run_batch(self, actions, group_names, task_days_text: str = "") -> None:
+        """`actions` holds Actions and built-in step ids (built_in_steps.py)
+        in run order. A built-in step makes the same checks as its Dashboard
+        button; if OA Emails is in the batch, the Essential Actions list is
+        read first, then one review window covers the whole batch."""
         if self._is_busy_and_told_user() or self._caseload_missing_and_told_user():
             return
-        items = list(zip(actions, group_names))
-        review_items = [
-            MultiReviewItem(
-                key=str(i), label=f"{group_name} — {action.name}",
-                students=self.action_runner.get_matching_students(action),
+        built_ins = {step for step in actions if is_built_in(step)}
+        signature = self.default_signature
+        if built_ins & {TASK_EMAILS, OA_EMAILS} and signature not in self.signature_provider.get_signature_names():
+            messagebox.showwarning(
+                "Default signature needed",
+                "Task and OA emails use your default signature. Choose one at the top of ⚙ Settings, then try again.",
             )
-            for i, (action, group_name) in enumerate(items)
-        ]
+            return
+        days = 1
+        if TASK_EMAILS in built_ins:
+            days = parse_look_back_days(task_days_text)
+            if days is None:
+                messagebox.showwarning(
+                    "Days to look back",
+                    f"The Dashboard's Days to look back box needs a whole number from 1 to {MAX_LOOK_BACK_DAYS}, "
+                    "or leave it blank for yesterday.",
+                )
+                return
+        reads_oa = OA_EMAILS in built_ins and any(g.is_course and g.has_objective_assessment for g in self.groups)
+        if not reads_oa:
+            self._review_batch(actions, group_names, signature, days, oa_found=[])
+            return
+        if not salesforce_browser_session.has_session():
+            messagebox.showinfo("Run Batch", "Log in to Salesforce first: click ↻ Refresh Caseload, then try again.")
+            return
+
+        def _found(found):
+            self.activity_logger.diagnostics.add_students([e.student for e in found])
+            self.activity_logger.log(f"Essential Actions read: {len(found)} OA pass(es)")
+            self._review_batch(actions, group_names, signature, days, oa_found=found)
+
+        self._run_in_background(
+            "Reading Essential Actions",
+            lambda control: self.action_runner.get_oa_emails(self.groups, self.essential_actions),
+            on_finished=_found,
+            stoppable=False,
+        )
+
+    def _review_batch(self, actions, group_names, signature: str, days: int, oa_found) -> None:
+        """One review window for the whole batch: each Action's section as
+        before (key "<i>"), and each built-in step's sections built by the
+        same helpers as its Dashboard button (keys "<i>:..."). Confirming
+        runs everything in order through run_batch."""
+        items = list(zip(actions, group_names))
+        actions_by_id = {a.id: a for a in self.action_repo.load_actions()} if WELCOME_EMAILS in actions else {}
+        review_items = []
+        makers = []  # per batch step: selections -> what run_batch runs
+        for i, (step, group_name) in enumerate(items):
+            if not is_built_in(step):
+                review_items.append(MultiReviewItem(
+                    key=str(i), label=f"{group_name} — {step.name}",
+                    students=self.action_runner.get_matching_students(step),
+                ))
+                makers.append(lambda selections, item=(step, group_name): item)
+                continue
+            prefix = f"{i}:"
+            if step == WELCOME_EMAILS:
+                step_items, make = self._batch_welcome_step(prefix, actions_by_id)
+            elif step == TASK_EMAILS:
+                step_items, make = self._batch_task_step(prefix, days, signature)
+            else:
+                step_items, make = self._batch_oa_step(prefix, oa_found, signature)
+            review_items.extend(step_items or [MultiReviewItem(
+                key=f"{prefix}none", label=f"{BUILT_IN_GROUP_LABEL} — {BUILT_IN_STEPS[step]} — nothing to send",
+                students=[],
+            )])
+            makers.append(make)
 
         def _on_confirm(selections):
             self._log_review_choice(
                 f"Run Batch ({len(items)} actions)", sum(len(ids) for ids in selections.values()),
                 sum(len(item.students) for item in review_items),
             )
-            included_ids_by_index = {int(key): ids for key, ids in selections.items()}
+            included_ids_by_index = {int(key): ids for key, ids in selections.items() if key.isdigit()}
+            to_run = [make(selections) for make in makers]
             self._run_in_background(
                 "Running Batch",
                 lambda control: self.action_runner.run_batch(
-                    items, included_ids_by_index=included_ids_by_index, control=control,
+                    to_run, included_ids_by_index=included_ids_by_index, control=control,
                 ),
                 on_finished=_show_results,
             )
@@ -914,6 +1037,42 @@ class AppController:
             items=review_items,
             on_confirm=_on_confirm,
         )
+
+    # Each _batch_*_step returns the step's review sections and a function
+    # turning the review window's choices into the call its button makes.
+
+    def _batch_welcome_step(self, prefix: str, actions_by_id):
+        review_items = _welcome_review_items(self.groups, self.action_runner, actions_by_id, prefix)
+
+        def make(selections):
+            chosen = {item.key[len(prefix):]: selections.get(item.key, set()) for item in review_items}
+            return BuiltInRun(BUILT_IN_STEPS[WELCOME_EMAILS], lambda control, texts: self.action_runner.run_welcome_emails(
+                self.groups, actions_by_id, included_ids_by_group_id=chosen, control=control, text_queue=texts,
+            ))
+        return review_items, make
+
+    def _batch_task_step(self, prefix: str, days: int, signature: str):
+        task_emails = self.action_runner.get_task_emails(self.groups, days)
+        review_items, group_of_item = _task_review_items(self.groups, task_emails, prefix)
+
+        def make(selections):
+            chosen = {group_id: set() for group_id in task_emails}
+            for key, group_id in group_of_item.items():
+                chosen[group_id] |= selections.get(key, set())
+            return BuiltInRun(BUILT_IN_STEPS[TASK_EMAILS], lambda control, texts: self.action_runner.run_task_emails(
+                task_emails, signature, included_ids_by_group_id=chosen, control=control,
+            ))
+        return review_items, make
+
+    def _batch_oa_step(self, prefix: str, found, signature: str):
+        review_items = _oa_review_items(found, prefix)
+
+        def make(selections):
+            chosen = {item.key[len(prefix):]: selections.get(item.key, set()) for item in review_items}
+            return BuiltInRun(BUILT_IN_STEPS[OA_EMAILS], lambda control, texts: self.action_runner.run_oa_emails(
+                found, signature, self.essential_actions, included_ids_by_key=chosen, control=control,
+            ))
+        return review_items, make
 
     def handle_settings_requested(self) -> None:
         self.switch_workspace_view(
@@ -1517,8 +1676,7 @@ class AppController:
         return self._load_caseload_logging_in_if_needed()
 
     def _reload_roster_keeping_browsers(self):
-        """Runs on the background thread. Mongoose stays open and signed in,
-        unless a login is needed: its window locks the Edge profile that uses."""
+        """Runs on the background thread. Mongoose stays open and signed in."""
         try:
             if salesforce_browser_session.has_session():
                 students = self.student_data_provider.refresh()
@@ -1561,10 +1719,13 @@ class AppController:
             status="Reloading the caseload from Salesforce… (a login window may open)",
         )
 
-    def _close_session_browsers(self) -> None:
-        """The notes page is showing the old caseload, and Mongoose's window
-        would lock the Edge profile a new Salesforce login needs."""
-        for name in ("note_writer", "text_sender", "essential_actions"):
+    def _close_session_browsers(self, include_texting: bool = False) -> None:
+        """The notes and Essential Actions pages show the old caseload.
+        Mongoose stays open and signed in (developer, 2026-11-18): a new
+        Salesforce login opens as another tab in its window, so nothing
+        needs it closed. It closes when the app does (include_texting)."""
+        names = ("note_writer", "essential_actions") + (("text_sender",) if include_texting else ())
+        for name in names:
             sender = getattr(self, name, None)
             if sender is not None:
                 sender.close()
@@ -1576,7 +1737,8 @@ class AppController:
 
         def _close():
             try:
-                self._close_session_browsers()
+                self._close_session_browsers(include_texting=True)
+                login_window().close()
             finally:
                 closed.set()
 

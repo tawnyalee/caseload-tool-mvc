@@ -15,8 +15,9 @@ class MockController:
     def handle_send_welcome_emails(self):
         self.welcome_clicked = True
 
-    def handle_open_batch_runner(self):
+    def handle_open_batch_runner(self, task_days_text=""):
         self.batch_runner_opened = True
+        self.batch_task_days_text = task_days_text
 
     def handle_send_ad_hoc_email(self, **kwargs):
         self.ad_hoc_calls.append(kwargs)
@@ -58,9 +59,11 @@ def test_run_batch_button_calls_controller(ctk_root):
     controller = MockController()
     view = DashboardView(master=ctk_root, controller=controller)
 
+    view.task_days_entry.insert(0, "3")
     view.btn_run_batch.invoke()
 
     assert controller.batch_runner_opened is True
+    assert controller.batch_task_days_text == "3"
 
 
 @patch("src.views.dashboard_view.messagebox.showwarning")
@@ -137,3 +140,11 @@ def test_send_all_note_fields_are_optional(mock_confirm, ctk_root):
     assert call["note_subject"] == ""
     assert call["note_body"] == ""
     assert call["follow_up_note"] == ""
+
+
+def test_the_oa_button_warns_to_keep_direct_saves_on(ctk_root):
+    from src.views.dashboard_view import OA_DIRECT_SAVE_WARNING
+    view = DashboardView(master=ctk_root, controller=MockController())
+    texts = [w.cget("text") for w in view.scrollable_container.winfo_children() if isinstance(w, ctk.CTkLabel)]
+    assert OA_DIRECT_SAVE_WARNING in texts
+    assert "Save notes directly to Salesforce (faster)" in OA_DIRECT_SAVE_WARNING

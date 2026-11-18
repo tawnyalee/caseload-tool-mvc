@@ -291,3 +291,39 @@ def test_delete_saved_batch_declined_leaves_it_in_place(ctk_root, monkeypatch):
     assert deleted_ids == []
     assert len(modal._saved_batches) == 1
     modal.destroy()
+
+
+# --- Dashboard sends as batch steps (developer, 2026-11-17) ---
+
+from src.services.built_in_steps import OA_EMAILS, TASK_EMAILS, WELCOME_EMAILS
+
+
+def test_the_dashboard_sends_are_offered_first_and_run_by_id(ctk_root):
+    actions, groups = _make_actions_and_groups()
+    runs = []
+    modal = BatchRunModal(master=ctk_root, actions=actions, groups=groups, on_run=lambda a, g: runs.append((a, g)))
+    labels = [w.cget("text") for w in modal.available_list.winfo_children()]
+    assert labels[:3] == ["Dashboard — Welcome Emails", "Dashboard — Task Emails", "Dashboard — OA Emails"]
+
+    for step_id in (OA_EMAILS, "A1"):
+        modal._checkbox_vars[step_id].set("on")
+        modal._on_step_toggled(step_id, modal._checkbox_vars[step_id])
+    assert [w.winfo_children()[0].cget("text") for w in modal.selected_list.winfo_children()] == [
+        "1. Dashboard — OA Emails", "2. D424 — Task 2 Passed",
+    ]
+
+    modal._handle_run_clicked()
+
+    assert runs == [([OA_EMAILS, actions[0]], ["", "D424"])]
+
+
+def test_a_saved_batch_keeps_its_dashboard_steps(ctk_root):
+    actions, groups = _make_actions_and_groups()
+    batches = [SavedBatch(name="Morning", action_ids=[WELCOME_EMAILS, "A1", TASK_EMAILS], batch_id="B1")]
+    modal = BatchRunModal(master=ctk_root, actions=actions, groups=groups, saved_batches=batches)
+
+    modal._on_saved_batch_selected("Morning")
+
+    assert modal._selected_ids == [WELCOME_EMAILS, "A1", TASK_EMAILS]
+    assert modal._checkbox_vars[TASK_EMAILS].get() == "on"
+    modal.destroy()

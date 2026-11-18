@@ -24,12 +24,12 @@ The login window does use the app's own saved Edge profile (2026-10-28,
 see browser_launch.py), the way the professor's everyday Edge would, so
 PingID recognizes the device instead of treating every launch as new.
 """
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Error as PlaywrightError, Playwright, TimeoutError as PlaywrightTimeoutError
 
-from src.services.browser_launch import clear_cached_pages, launch_browser, launch_login_context
+from src.services.browser_launch import clear_cached_pages, launch_browser, login_window
 
 LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -71,31 +71,39 @@ def looks_like_a_different_host(original_url: str, landed_url: str) -> bool:
 
 def log_in_interactively(
     playwright: Playwright, target_url: str, logged_in_selector: str, headless: bool = False,
+    after_login: Optional[Callable[[], None]] = None,
 ) -> None:
-    """Opens a visible browser at `target_url` and waits (up to 5 minutes)
-    for the professor to log in. "Logged in" means `logged_in_selector` -
-    an element that only exists on the real, authenticated target page
-    (the Caseload page's Download button) - has appeared, so a redirect hop
+    """Opens `target_url` in a tab of the app's login window
+    (browser_launch.LoginWindow) and waits (up to 5 minutes) for the
+    professor to log in. "Logged in" means `logged_in_selector` - an
+    element that only exists on the real, authenticated target page (the
+    Caseload page's Download button) - has appeared, so a redirect hop
     partway through SSO/MFA can't be mistaken for success. Raises
-    RuntimeError if the window is closed first or time runs out.
+    RuntimeError if the tab is closed first or time runs out.
+
+    `after_login` runs once the login succeeds, before this tab closes: the
+    app opens the Mongoose tab there, so the window stays up in front
+    (developer, 2026-11-18). Its own failure doesn't undo the login.
     `headless` exists only so tests don't pop up a window."""
     global _session_state
-    context = launch_login_context(playwright, headless=headless)
+    page = login_window().new_tab(playwright, headless=headless)
     try:
-        page = context.pages[0] if context.pages else context.new_page()
         page.goto(target_url)
         page.wait_for_selector(logged_in_selector, state="visible", timeout=LOGIN_TIMEOUT_MS)
-        _session_state = context.storage_state()  # a dict, kept in memory only
-        clear_cached_pages(context, page.url)
+        _session_state = page.context.storage_state()  # a dict, kept in memory only
+        clear_cached_pages(page.context, page.url)
     except PlaywrightTimeoutError:
+        login_window().close_tab(page)
         raise RuntimeError("Salesforce login wasn't finished within 5 minutes.") from None
     except PlaywrightError:
+        login_window().close_tab(page)
         raise RuntimeError("The Salesforce login window was closed before login finished.") from None
-    finally:
+    if after_login is not None:
         try:
-            context.close()
-        except PlaywrightError:
-            pass  # already closed by the professor
+            after_login()
+        except Exception:
+            pass  # e.g. Mongoose couldn't open; texts will ask for it later
+    login_window().close_tab(page)
 
 
 def open_authenticated_context(playwright: Playwright, headless: bool = True) -> BrowserContext:

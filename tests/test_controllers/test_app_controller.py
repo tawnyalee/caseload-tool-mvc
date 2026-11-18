@@ -41,6 +41,14 @@ from src.services.mongoose_text_sender import AUTOMATIC, DRY_RUN, MongooseTextSe
 
 
 
+def _bind_batch(controller):
+    """The real batch handlers on a MagicMock controller (they call each
+    other through self). Returns the bound _handle_run_batch."""
+    for name in ("_review_batch", "_batch_welcome_step", "_batch_task_step", "_batch_oa_step"):
+        setattr(controller, name, getattr(AppController, name).__get__(controller, AppController))
+    return AppController._handle_run_batch.__get__(controller, AppController)
+
+
 def _runs_synchronously(controller):
     """Stand-in for the background worker in tests that drive a handler
     against a MagicMock controller: nothing is busy, and work runs right
@@ -387,7 +395,7 @@ def test_handle_run_batch_shows_showinfo_when_everything_succeeds(mock_modal, mo
     controller.action_runner.run_batch.return_value = batch_summary
     action = MagicMock()
 
-    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch = _bind_batch(controller)
     handle_run_batch([action], ["Group A"])
 
     controller.action_runner.run_batch.assert_not_called()
@@ -409,7 +417,7 @@ def test_handle_run_batch_shows_results_window_when_an_action_errors(mock_modal,
     ])
     controller.action_runner.run_batch.return_value = batch_summary
 
-    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch = _bind_batch(controller)
     handle_run_batch([MagicMock()], ["Group A"])
 
     _, kwargs = mock_modal.call_args
@@ -432,7 +440,7 @@ def test_handle_run_batch_shows_results_window_when_a_step_failed(mock_modal, mo
     ])
     controller.action_runner.run_batch.return_value = batch_summary
 
-    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch = _bind_batch(controller)
     handle_run_batch([MagicMock()], ["Group A"])
 
     _, kwargs = mock_modal.call_args
@@ -450,7 +458,7 @@ def test_handle_run_batch_builds_review_items_with_each_actions_matches(mock_mod
     action_b.name = "Task 2"
     controller.action_runner.get_matching_students.side_effect = [["s1", "s2"], ["s3"]]
 
-    handle_run_batch = AppController._handle_run_batch.__get__(controller, AppController)
+    handle_run_batch = _bind_batch(controller)
     handle_run_batch([action_a, action_b], ["D424", "C769"])
 
     _, kwargs = mock_modal.call_args
@@ -525,13 +533,15 @@ def test_handle_open_batch_runner_loads_actions_and_opens_modal_with_on_run_wire
     controller.groups = [Group(name="Group A", group_id="G1")]
     controller.right_workspace = MagicMock()
 
-    controller.handle_open_batch_runner()
+    controller._handle_run_batch = MagicMock()
+    controller.handle_open_batch_runner("3")
 
     mock_modal.assert_called_once()
     _, kwargs = mock_modal.call_args
     assert [a.id for a in kwargs["actions"]] == [saved_action.id]
     assert kwargs["groups"] == controller.groups
-    assert kwargs["on_run"] == controller._handle_run_batch
+    kwargs["on_run"](["steps"], ["names"])  # passes the Dashboard's days along
+    controller._handle_run_batch.assert_called_once_with(["steps"], ["names"], "3")
     assert [b.id for b in kwargs["saved_batches"]] == [saved_batch.id]
     assert kwargs["on_save_batch"] == controller._handle_save_batch
     assert kwargs["on_delete_batch"] == controller._handle_delete_batch
@@ -780,17 +790,84 @@ def test_startup_failure_is_kept_for_a_popup_instead_of_only_the_log():
     assert "login window was closed" in controller._startup_problem
 
 
-def test_refresh_closes_the_session_browsers_before_reloading():
+def test_refresh_closes_the_notes_browser_but_keeps_mongoose_signed_in():
+    """Developer, 2026-11-18: a new Salesforce login opens beside Mongoose
+    in the shared window, so Refresh no longer closes it."""
     controller = MagicMock()
     calls = MagicMock()
     controller.note_writer = calls.writer
     controller.text_sender = calls.texts
+    controller.essential_actions = calls.eas
     controller._load_caseload_logging_in_if_needed = calls.load
     controller._close_session_browsers = AppController._close_session_browsers.__get__(controller, AppController)
 
     AppController._refresh_caseload(controller)
 
-    assert [c[0] for c in calls.mock_calls] == ["writer.close", "texts.close", "load"]
+    assert [c[0] for c in calls.mock_calls] == ["writer.close", "eas.close", "load"]
+
+
+def test_closing_the_app_closes_mongoose_and_the_login_window(monkeypatch):
+    from src.services import browser_launch
+    controller = MagicMock()
+    calls = MagicMock()
+    controller.note_writer, controller.text_sender, controller.essential_actions = calls.writer, calls.texts, calls.eas
+    monkeypatch.setattr(browser_launch._login_window, "close", calls.window)
+    controller._close_session_browsers = AppController._close_session_browsers.__get__(controller, AppController)
+    controller.worker.submit.side_effect = lambda work, on_done, on_error: work()
+
+    AppController._close_browsers_before_exit(controller)
+
+    assert [c[0] for c in calls.mock_calls] == ["writer.close", "eas.close", "texts.close", "window"]
+
+
+def _login_controller():
+    controller = MagicMock()
+    controller._mongoose_login_pending = False
+    for name in ("_log_in_to_salesforce", "_open_mongoose_tab", "_wait_for_mongoose_login",
+                 "_load_caseload_logging_in_if_needed"):
+        setattr(controller, name, getattr(AppController, name).__get__(controller, AppController))
+    controller.text_sender.open_login_tab.return_value = True
+    return controller
+
+
+def test_mongoose_opens_right_after_the_salesforce_login_and_is_waited_for_after_the_roster(monkeypatch):
+    controller = _login_controller()
+    order = []
+
+    def fake_login(playwright, target_url, logged_in_selector, headless=False, after_login=None):
+        order.append("salesforce login")
+        after_login()
+    monkeypatch.setattr(sbs, "log_in_interactively", fake_login)
+    monkeypatch.setattr(sbs, "has_session", lambda: False)
+    monkeypatch.setattr("src.controllers.app_controller.playwright_session", MagicMock())
+    controller.text_sender.open_login_tab.side_effect = lambda: order.append("mongoose tab") or True
+    controller.text_sender.wait_for_login.side_effect = lambda: order.append("wait for mongoose")
+    controller.student_data_provider.refresh.side_effect = lambda: order.append("roster") or ["s1"]
+
+    assert controller._load_caseload_logging_in_if_needed() == ["s1"]
+
+    assert order == ["salesforce login", "mongoose tab", "roster", "wait for mongoose"]
+
+
+def test_a_skipped_mongoose_login_is_only_logged():
+    controller = _login_controller()
+    controller._mongoose_login_pending = True
+    controller.text_sender.wait_for_login.side_effect = RuntimeError("The Mongoose tab was closed before login finished.")
+
+    controller._wait_for_mongoose_login()  # doesn't raise
+
+    assert "[MONGOOSE NOT LOGGED IN]" in controller.activity_logger.log.call_args.args[0]
+    assert controller._mongoose_login_pending is False
+
+
+def test_no_wait_when_mongoose_was_already_open():
+    controller = _login_controller()
+    controller.text_sender.open_login_tab.return_value = False  # already signed in from earlier
+
+    controller._open_mongoose_tab()
+    controller._wait_for_mongoose_login()
+
+    controller.text_sender.wait_for_login.assert_not_called()
 
 
 @patch("src.controllers.app_controller.messagebox.showinfo")
@@ -1283,8 +1360,101 @@ def test_the_real_welcome_button_reloads_an_old_roster(_session, mock_review):
     controller.action_repo.load_actions.return_value = []
     controller.groups = []
     controller.right_workspace = MagicMock()
+    controller.action_runner = MagicMock()
 
     controller.handle_send_welcome_emails()
 
     controller.student_data_provider.refresh.assert_called_once()
     mock_review.assert_called_once()
+
+
+# --- Dashboard sends as batch steps (developer, 2026-11-17) ---
+
+from src.services.built_in_steps import OA_EMAILS, TASK_EMAILS, WELCOME_EMAILS
+from src.services.oa_emails import EssentialActionRow, OaEmail
+
+
+def _batch_controller():
+    controller = _runs_synchronously(MagicMock())
+    controller.default_signature = "Sig"
+    controller.signature_provider.get_signature_names.return_value = ["Sig"]
+    controller.action_runner.run_batch.return_value = BatchRunSummary()
+    return controller
+
+
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_a_batch_reviews_built_in_steps_with_actions_and_runs_each_as_its_button_does(mock_modal, _info):
+    controller = _batch_controller()
+    welcome = MagicMock()
+    welcome.id, welcome.name = "W1", "Welcome"
+    controller.action_repo.load_actions.return_value = [welcome]
+    controller.groups = [Group(name="D424", group_id="G1", welcome_action_id="W1")]
+    controller.action_runner.get_matching_students.return_value = ["s1"]
+    controller.action_runner.get_task_emails.return_value = {}  # nobody passed a task
+    action = MagicMock()
+    action.name = "Check-in"
+
+    _bind_batch(controller)([WELCOME_EMAILS, action, TASK_EMAILS], ["", "C769", ""], "2")
+
+    controller.action_runner.get_task_emails.assert_called_once_with(controller.groups, 2)
+    items = mock_modal.call_args.kwargs["items"]
+    assert [item.key for item in items] == ["0:G1", "1", "2:none"]
+    assert items[2].label == "Dashboard — Task Emails — nothing to send" and items[2].students == []
+
+    mock_modal.call_args.kwargs["on_confirm"]({"0:G1": {"SF1"}, "1": {"SF2"}, "2:none": set()})
+
+    steps, = controller.action_runner.run_batch.call_args.args
+    assert controller.action_runner.run_batch.call_args.kwargs["included_ids_by_index"] == {1: {"SF2"}}
+    assert steps[1] == (action, "C769")
+    assert [steps[0].name, steps[2].name] == ["Welcome Emails", "Task Emails"]
+    texts = []
+    steps[0].run("control", texts)
+    controller.action_runner.run_welcome_emails.assert_called_once_with(
+        controller.groups, {"W1": welcome}, included_ids_by_group_id={"G1": {"SF1"}}, control="control", text_queue=texts,
+    )
+    steps[2].run("control", texts)
+    controller.action_runner.run_task_emails.assert_called_once_with(
+        {}, "Sig", included_ids_by_group_id={}, control="control",
+    )
+
+
+@patch.object(sbs, "has_session", return_value=True)
+@patch("src.controllers.app_controller.messagebox.showinfo")
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_a_batch_with_oa_emails_reads_the_list_first_then_sends_what_was_chosen(mock_modal, _info, _session):
+    controller = _batch_controller()
+    controller.groups = [Group(name="D424", group_id="G1", is_course=True, course_code="D424", has_objective_assessment=True)]
+    row = EssentialActionRow(
+        ea_id="a5h1", contact_id="003A", student_id="111", full_name="Jo Smith", preferred_name="",
+        email="jo@wgu.test", course_code="D424", reason="Student Passed Objective Assessment-Instructor",
+    )
+    found = [OaEmail(row=row, student=row.as_student(), group=None, body="<p>Well done</p>", email_name="D424 — Congrats")]
+    controller.action_runner.get_oa_emails.return_value = found
+
+    _bind_batch(controller)([OA_EMAILS], [""])
+
+    controller.action_runner.get_oa_emails.assert_called_once_with(controller.groups, controller.essential_actions)
+    items = mock_modal.call_args.kwargs["items"]
+    assert [item.key for item in items] == ["0:D424 — Congrats"]
+
+    mock_modal.call_args.kwargs["on_confirm"]({"0:D424 — Congrats": {"111"}})
+    steps, = controller.action_runner.run_batch.call_args.args
+    steps[0].run("control", [])
+    controller.action_runner.run_oa_emails.assert_called_once_with(
+        found, "Sig", controller.essential_actions, included_ids_by_key={"D424 — Congrats": {"111"}}, control="control",
+    )
+
+
+@patch("src.controllers.app_controller.messagebox.showwarning")
+@patch("controllers.app_controller.MultiReviewSendModal")
+def test_a_batch_with_task_emails_checks_the_days_and_signature_like_the_button(mock_modal, mock_warning):
+    controller = _batch_controller()
+
+    _bind_batch(controller)([TASK_EMAILS], [""], "lots")
+    assert "Days to look back" in mock_warning.call_args.args[0]
+
+    controller.default_signature = "Gone"
+    _bind_batch(controller)([TASK_EMAILS], [""], "")
+    assert "signature" in mock_warning.call_args.args[1]
+    mock_modal.assert_not_called()

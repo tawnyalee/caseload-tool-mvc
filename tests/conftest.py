@@ -16,13 +16,13 @@ def _never_open_a_visible_login_window(monkeypatch):
     the test immediately instead."""
     real_login = salesforce_browser_session.log_in_interactively
 
-    def guarded(playwright, target_url, logged_in_selector, headless=False):
+    def guarded(playwright, target_url, logged_in_selector, headless=False, after_login=None):
         if not headless:
             raise AssertionError(
                 "A test tried to open a real, visible Salesforce login window - "
                 "patch AppController._log_in_to_salesforce in that test."
             )
-        return real_login(playwright, target_url, logged_in_selector, headless=True)
+        return real_login(playwright, target_url, logged_in_selector, headless=True, after_login=after_login)
 
     monkeypatch.setattr(salesforce_browser_session, "log_in_interactively", guarded)
 
@@ -38,6 +38,16 @@ def _never_open_a_visible_mongoose_login_window(monkeypatch):
         return real_login(playwright, logged_in_selector, target_url=target_url, headless=True)
 
     monkeypatch.setattr(mongoose_browser_session, "log_in_interactively", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_login_window():
+    """The app's shared login window (browser_launch.LoginWindow) is one
+    per app session; each test starts and ends without one."""
+    from src.services import browser_launch
+    browser_launch._login_window.close()
+    yield
+    browser_launch._login_window.close()
 
 
 @pytest.fixture(autouse=True)

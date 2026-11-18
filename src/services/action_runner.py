@@ -24,12 +24,13 @@ cancellation notice).
 import threading
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from src.models.action import Action
 from src.models.group import Group
 from src.models.student import Student
 from src.services.activity_logger import ActivityLogger
+from src.services.built_in_steps import BUILT_IN_GROUP_LABEL
 from src.services.email_sender import EmailSender
 from src.services.filter_engine import matches_student
 from src.services.merge_fields import render_merge_fields
@@ -136,6 +137,16 @@ class BatchItemResult:
     group_name: str
     summary: ActionRunSummary
     error: Optional[str] = None  # set only if the action's run() itself raised, not per-student failures
+
+
+@dataclass
+class BuiltInRun:
+    """A Dashboard send as a batch step (built_in_steps.py): its name, and
+    the call its Dashboard button makes, already holding the review
+    window's choices. `run(control, text_queue)` returns its summary; texts
+    go in text_queue so they still go out after every email and note."""
+    name: str
+    run: Callable[[Optional[RunControl], List["QueuedText"]], "ActionRunSummary"]
 
 
 @dataclass
@@ -325,15 +336,18 @@ class ActionRunner:
         actions_by_id: Dict[str, Action],
         included_ids_by_group_id: Optional[Dict[str, Set[str]]] = None,
         control: Optional[RunControl] = None,
+        text_queue: Optional[List[QueuedText]] = None,
     ) -> ActionRunSummary:
         """Runs every group's designated welcome action (Group.welcome_action_id)
         and aggregates all of them into a single combined summary.
+        `text_queue`, when given (a batch), collects the texts for the caller
+        to send; otherwise they go out at the end of this run.
         `included_ids_by_group_id`, when given, restricts each group's run to
         just those student IDs - how the multi-item pre-send review dialog's
         per-group deselection takes effect (see run())."""
         self.activity_logger.log("Starting welcome-email run across all groups")
         combined = ActionRunSummary()
-        texts: List[QueuedText] = []
+        texts: List[QueuedText] = [] if text_queue is None else text_queue
         group_summaries = []
 
         for group in groups:
@@ -354,7 +368,8 @@ class ActionRunner:
                 action, group_name=group.name, included_student_ids=included_ids, control=control, text_queue=texts,
             ))
 
-        self._send_queued_texts(texts, control)
+        if text_queue is None:
+            self._send_queued_texts(texts, control)
         for group_summary in group_summaries:
             combined.results.extend(group_summary.results)
         self.activity_logger.log(
@@ -516,7 +531,7 @@ class ActionRunner:
 
     def run_batch(
         self,
-        items: List[Tuple[Action, str]],
+        items: List[Union[Tuple[Action, str], BuiltInRun]],
         included_ids_by_index: Optional[Dict[int, Set[str]]] = None,
         control: Optional[RunControl] = None,
     ) -> BatchRunSummary:
@@ -529,30 +544,40 @@ class ActionRunner:
         can't stop the whole batch. `included_ids_by_index`, when given,
         restricts item i's run to just those student IDs - keyed by
         position rather than action.id since the same action could appear
-        more than once in a batch against different groups."""
+        more than once in a batch against different groups. A BuiltInRun
+        item (a Dashboard send) runs its own call, in the same order and
+        with the same isolation."""
         self.activity_logger.log(f"Starting batch run — {len(items)} action(s)")
         batch_summary = BatchRunSummary()
         texts: List[QueuedText] = []
 
-        for i, (action, group_name) in enumerate(items):
+        for i, item in enumerate(items):
+            if isinstance(item, BuiltInRun):
+                name, group_name = item.name, BUILT_IN_GROUP_LABEL
+            else:
+                action, group_name = item
+                name = action.name
             included_ids = included_ids_by_index.get(i) if included_ids_by_index else None
             if control:
-                control.context = f"{group_name} — {action.name} ({i + 1} of {len(items)})"
+                control.context = f"{group_name} — {name} ({i + 1} of {len(items)})"
             try:
-                summary = self.run(
-                    action, group_name=group_name, included_student_ids=included_ids, control=control,
-                    text_queue=texts,
-                )
+                if isinstance(item, BuiltInRun):
+                    summary = item.run(control, texts)
+                else:
+                    summary = self.run(
+                        action, group_name=group_name, included_student_ids=included_ids, control=control,
+                        text_queue=texts,
+                    )
                 batch_summary.items.append(
-                    BatchItemResult(action_name=action.name, group_name=group_name, summary=summary)
+                    BatchItemResult(action_name=name, group_name=group_name, summary=summary)
                 )
             except Exception as exc:
                 self.activity_logger.log_failure(
-                    f"[BATCH ITEM FAILED] Action '{action.name}' (Group: '{group_name}'): {exc}", exc
+                    f"[BATCH ITEM FAILED] Action '{name}' (Group: '{group_name}'): {exc}", exc
                 )
                 batch_summary.items.append(
                     BatchItemResult(
-                        action_name=action.name, group_name=group_name,
+                        action_name=name, group_name=group_name,
                         summary=ActionRunSummary(), error=str(exc),
                     )
                 )

@@ -1133,3 +1133,61 @@ def test_a_long_text_is_flagged_in_the_log(tmp_path):
     runner.run(_text_only_action(template.id, body="x" * 200), group_name="General")
 
     assert any("[TEXT LENGTH] The text is 200 characters" in line for line in received)
+
+
+# --- Dashboard sends as batch steps (developer, 2026-11-17) ---
+
+def test_a_built_in_step_runs_in_its_place_and_is_itemized(tmp_path):
+    from src.services.action_runner import ActionRunSummary, BuiltInRun
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+    action = _make_action(template.id, is_text=False, filters=[{"field": "first_name", "operator": "Equals", "value": "Jane"}])
+    order = []
+
+    def task_emails(control, texts):
+        order.append("task emails")
+        return ActionRunSummary()
+
+    original_run = runner.run
+    runner.run = lambda *args, **kwargs: order.append("action") or original_run(*args, **kwargs)
+    summary = runner.run_batch([BuiltInRun("Task Emails", task_emails), (action, "General")])
+
+    assert order == ["task emails", "action"]
+    assert [(i.action_name, i.group_name) for i in summary.items] == [("Task Emails", "Dashboard"), ("Welcome Action", "General")]
+
+
+def test_a_built_in_step_that_raises_doesnt_stop_the_batch(tmp_path):
+    from src.services.action_runner import BuiltInRun
+    students = _make_students()
+    runner, template, *_ = _make_runner(tmp_path, students)
+
+    def broken(control, texts):
+        raise RuntimeError("Essential Actions page didn't load")
+
+    summary = runner.run_batch([BuiltInRun("OA Emails", broken), (_make_action(template.id, is_text=False), "General")])
+
+    assert summary.items[0].error == "Essential Actions page didn't load"
+    assert summary.items[1].summary.succeeded > 0
+
+
+def test_welcome_texts_in_a_batch_wait_for_the_end(tmp_path):
+    from src.services.action_runner import BuiltInRun
+    students = _make_students()
+    runner, template, _, text_sender, _ = _make_runner(tmp_path, students)
+    welcome = _make_action(template.id, has_note=False)
+    welcome.id = "W1"
+    group = Group(name="D424", group_id="G1", welcome_action_id="W1")
+    texts_when_second_step_ran = []
+
+    def second_step(control, texts):
+        texts_when_second_step_ran.append(len(text_sender.sent))
+        from src.services.action_runner import ActionRunSummary
+        return ActionRunSummary()
+
+    welcome_step = BuiltInRun("Welcome Emails", lambda control, texts: runner.run_welcome_emails(
+        [group], {"W1": welcome}, control=control, text_queue=texts,
+    ))
+    runner.run_batch([welcome_step, BuiltInRun("Task Emails", second_step)])
+
+    assert texts_when_second_step_ran == [0]  # nothing texted mid-batch
+    assert len(text_sender.sent) == 3  # all sent at the end

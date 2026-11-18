@@ -99,6 +99,86 @@ def launch_login_context(playwright: Playwright, headless: bool = False) -> Brow
         raise
 
 
+class LoginWindow:
+    """The app's one visible Edge window, shared by the Salesforce login and
+    Mongoose as tabs (developer, 2026-11-18): right after the Salesforce
+    login, the Mongoose tab opens in front in the same window, so the
+    professor logs in to both at once. One window also means a later
+    Salesforce login never has to close Mongoose: Edge allows only one
+    window on the saved profile at a time.
+
+    A tab is opened with new_tab() and given back with close_tab(); the
+    window closes with its last tab. Background thread only, like every
+    Playwright call in the app."""
+
+    def __init__(self):
+        self._context = None
+        self._holds_playwright = False
+        self._closed = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._context is not None and not self._closed
+
+    def new_tab(self, playwright: Playwright, headless: bool = False):
+        """A new tab, brought to the front, opening the window first if it
+        isn't open. While open, the window keeps this thread's shared
+        Playwright connection running (acquire_playwright)."""
+        if not self.is_open:
+            self.close()  # whatever is left of a window the professor closed
+            if playwright is getattr(_this_thread, "playwright", None):
+                acquire_playwright()
+                self._holds_playwright = True
+            try:
+                self._context = launch_login_context(playwright, headless=headless)
+            except Exception:
+                self.close()
+                raise
+            self._closed = False
+            self._context.on("close", lambda _context: setattr(self, "_closed", True))
+            blank = [p for p in self._context.pages if p.url in ("", "about:blank")]
+            page = blank[0] if blank else self._context.new_page()
+        else:
+            page = self._context.new_page()
+        page.bring_to_front()
+        return page
+
+    def close_tab(self, page) -> None:
+        """Closes one tab, and the window if it was the last one. Never raises."""
+        try:
+            page.close()
+        except Exception:
+            pass
+        try:
+            if self.is_open and not self._context.pages:
+                self.close()
+        except Exception:
+            self.close()
+
+    def close(self) -> None:
+        """Closes the window. Never raises."""
+        if self._context is not None and not self._closed:
+            try:
+                self._context.close()
+            except Exception:
+                pass
+        if self._holds_playwright:
+            try:
+                release_playwright()
+            except Exception:
+                pass
+        self._context = None
+        self._holds_playwright = False
+        self._closed = False
+
+
+_login_window = LoginWindow()
+
+
+def login_window() -> LoginWindow:
+    return _login_window
+
+
 def clear_cached_pages(context: BrowserContext, url: str, keep_local_storage: bool = False) -> None:
     """Drops `url`'s site's cached pages and site storage from the saved
     profile, keeping only its cookies. The login waits on the Caseload page,

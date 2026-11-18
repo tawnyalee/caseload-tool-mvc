@@ -129,32 +129,72 @@ def test_an_open_window_is_reused_between_runs():
     page.goto.assert_not_called()
 
 
-def test_a_window_the_professor_closed_is_opened_again(monkeypatch):
-    closed_page, new_page = MagicMock(), MagicMock()
-    closed_page.is_closed.return_value = True
-    context = MagicMock(pages=[new_page])
+def _shared_window(monkeypatch, new_page=None):
+    window = MagicMock()
+    window.new_tab.return_value = new_page or MagicMock()
+    monkeypatch.setattr(mts, "login_window", lambda: window)
     monkeypatch.setattr(mts, "acquire_playwright", MagicMock())
     monkeypatch.setattr(mts, "release_playwright", MagicMock())
-    monkeypatch.setattr(mts, "launch_login_context", lambda *_a, **_k: context)
+    return window
+
+
+def test_a_tab_the_professor_closed_is_opened_again_in_the_login_window(monkeypatch):
+    closed_page, new_page = MagicMock(), MagicMock()
+    closed_page.is_closed.return_value = True
+    new_page.is_closed.return_value = False
+    window = _shared_window(monkeypatch, new_page)
     sender = _open_sender(closed_page)
 
     sender.ensure_ready()
 
     assert sender._page is new_page
-    new_page.goto.assert_called_once_with(mts.MONGOOSE_URL)
+    window.new_tab.assert_called_once()
+    new_page.goto.assert_called_with(mts.MONGOOSE_URL)
+    new_page.wait_for_selector.assert_called_once()  # waited for the login
+
+
+def test_the_startup_tab_opens_without_waiting_then_waits_on_request(monkeypatch):
+    page = MagicMock()
+    page.is_closed.return_value = False
+    _shared_window(monkeypatch, page)
+    sender = mts.MongooseTextSender()
+
+    assert sender.open_login_tab() is True
+    page.goto.assert_called_once_with(mts.MONGOOSE_URL)
+    page.wait_for_selector.assert_not_called()
+    assert sender.open_login_tab() is False  # already open
+
+    sender.wait_for_login()
+    page.wait_for_selector.assert_called_once()
+
+
+def test_closing_the_startup_tab_ends_the_wait_and_texts_ask_again_later(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+    page = MagicMock()
+    page.is_closed.return_value = False
+    page.wait_for_selector.side_effect = PlaywrightError("Target closed")
+    window = _shared_window(monkeypatch, page)
+    sender = mts.MongooseTextSender()
+    sender.open_login_tab()
+
+    with pytest.raises(RuntimeError, match="closed before login finished"):
+        sender.wait_for_login()
+    assert sender._page is None
+    window.close_tab.assert_called_once_with(page)
 
 
 def test_closing_keeps_mongooses_sign_in(monkeypatch):
     clear = MagicMock()
     monkeypatch.setattr(mts, "clear_cached_pages", clear)
-    context = MagicMock()
-    sender = _open_sender(MagicMock())
-    sender._context = context
+    window = _shared_window(monkeypatch)
+    page = MagicMock()
+    page.is_closed.return_value = False
+    sender = _open_sender(page)
 
     sender.close()
 
-    clear.assert_called_once_with(context, mts.MONGOOSE_URL, keep_local_storage=True)
-    context.close.assert_called_once()
+    clear.assert_called_once_with(page.context, mts.MONGOOSE_URL, keep_local_storage=True)
+    window.close_tab.assert_called_once_with(page)
     assert sender._page is None
 
 

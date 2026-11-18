@@ -6,6 +6,13 @@ import customtkinter as ctk
 
 LOGGING_IN_TEXT = "Waiting for you to log in. Use the Edge window that opened."
 LOADING_CASELOAD_TEXT = "Logged in. Loading your caseload, this can take a minute or two..."
+# The Mongoose tab opens right after the Salesforce login (2026-11-18).
+LOADING_WITH_MONGOOSE_TEXT = (
+    "Logged in to Salesforce. Log in to Mongoose in the Edge window while your caseload loads..."
+)
+MONGOOSE_LOGIN_TEXT = (
+    "Caseload loaded. Log in to Mongoose in the Edge window, or close its tab to skip texting for now."
+)
 
 
 class LoadingView(ctk.CTkFrame):

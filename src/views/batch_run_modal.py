@@ -12,6 +12,10 @@ previously saved one back into the picker to run/edit/re-save. Saving
 never runs anything, and running never saves anything - the "Save Batch"
 and "Run Batch" buttons are deliberately separate, explained inline so
 that distinction is obvious in the UI (not just in code comments).
+
+The Dashboard's Welcome, Task and OA emails are listed first as built-in
+steps (built_in_steps.py, developer 2026-11-17). They're picked, ordered and
+saved like Actions; on_run receives their id string in place of an Action.
 """
 import customtkinter as ctk
 import tkinter.messagebox as messagebox
@@ -20,6 +24,7 @@ from typing import Callable, Dict, List, Optional
 from src.models.action import Action
 from src.models.group import Group
 from src.models.saved_batch import SavedBatch
+from src.services.built_in_steps import BUILT_IN_GROUP_LABEL, BUILT_IN_STEPS, is_built_in
 
 _NO_SAVED_BATCH_SELECTED = "— Select a saved batch —"
 _NO_SAVED_BATCHES_YET = "(no saved batches yet)"
@@ -101,6 +106,15 @@ class BatchRunModal(ctk.CTkToplevel):
         self.available_list = ctk.CTkScrollableFrame(left_frame, fg_color="transparent")
         self.available_list.pack(fill="both", expand=True, padx=5, pady=(0, 10))
 
+        for step_id, step_name in BUILT_IN_STEPS.items():
+            var = ctk.StringVar(value="off")
+            ctk.CTkCheckBox(
+                self.available_list, text=f"{BUILT_IN_GROUP_LABEL} — {step_name}",
+                variable=var, onvalue="on", offvalue="off",
+                command=lambda s=step_id, v=var: self._on_step_toggled(s, v),
+            ).pack(anchor="w", pady=2)
+            self._checkbox_vars[step_id] = var
+
         for action in actions:
             group_name = self._group_name_by_id.get(action.group_id, "Unknown Group")
             var = ctk.StringVar(value="off")
@@ -149,25 +163,31 @@ class BatchRunModal(ctk.CTkToplevel):
         self.save_button.pack(side="right", padx=(0, 8))
 
     def _on_checkbox_toggled(self, action: Action, var: ctk.StringVar) -> None:
+        self._on_step_toggled(action.id, var)
+
+    def _on_step_toggled(self, step_id: str, var: ctk.StringVar) -> None:
         if var.get() == "on":
-            if action.id not in self._selected_ids:
-                self._selected_ids.append(action.id)
+            if step_id not in self._selected_ids:
+                self._selected_ids.append(step_id)
         else:
-            self._selected_ids = [aid for aid in self._selected_ids if aid != action.id]
+            self._selected_ids = [aid for aid in self._selected_ids if aid != step_id]
         self._render_selected_list()
+
+    def _label_for(self, step_id: str) -> str:
+        if is_built_in(step_id):
+            return f"{BUILT_IN_GROUP_LABEL} — {BUILT_IN_STEPS[step_id]}"
+        action = self._actions_by_id[step_id]
+        return f"{self._group_name_by_id.get(action.group_id, 'Unknown Group')} — {action.name}"
 
     def _render_selected_list(self) -> None:
         for widget in self.selected_list.winfo_children():
             widget.destroy()
 
         for index, action_id in enumerate(self._selected_ids):
-            action = self._actions_by_id[action_id]
-            group_name = self._group_name_by_id.get(action.group_id, "Unknown Group")
-
             row = ctk.CTkFrame(self.selected_list, fg_color="transparent")
             row.pack(fill="x", pady=2)
 
-            label = ctk.CTkLabel(row, text=f"{index + 1}. {group_name} — {action.name}", anchor="w")
+            label = ctk.CTkLabel(row, text=f"{index + 1}. {self._label_for(action_id)}", anchor="w")
             label.pack(side="left", fill="x", expand=True)
 
             ctk.CTkButton(
@@ -198,8 +218,11 @@ class BatchRunModal(ctk.CTkToplevel):
     def _handle_run_clicked(self) -> None:
         if not self._selected_ids:
             return
-        selected_actions = [self._actions_by_id[aid] for aid in self._selected_ids]
-        group_names = [self._group_name_by_id.get(a.group_id, "") for a in selected_actions]
+        # A built-in step is passed as its id string, with no group name.
+        selected_actions = [aid if is_built_in(aid) else self._actions_by_id[aid] for aid in self._selected_ids]
+        group_names = [
+            "" if is_built_in(a) else self._group_name_by_id.get(a.group_id, "") for a in selected_actions
+        ]
         # Close first; see ReviewSendModal._on_send for why.
         self.destroy()
         if self._on_run:
@@ -231,7 +254,7 @@ class BatchRunModal(ctk.CTkToplevel):
         # deleted (Actions can be removed independently) - silently drop
         # anything that's no longer around rather than erroring, same
         # "one missing thing shouldn't block the rest" spirit as ActionRunner.
-        self._selected_ids = [aid for aid in batch.action_ids if aid in self._actions_by_id]
+        self._selected_ids = [aid for aid in batch.action_ids if aid in self._actions_by_id or is_built_in(aid)]
         for action_id, var in self._checkbox_vars.items():
             var.set("on" if action_id in self._selected_ids else "off")
         self._render_selected_list()

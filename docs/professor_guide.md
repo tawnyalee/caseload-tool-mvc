@@ -27,8 +27,9 @@ No other installation is needed. Your groups, Actions, and templates are stored 
 Each time you open the app, an **Edge window opens to the WGU sign-in**:
 
 1. Log in as usual. The first time, you'll also approve a **PingID** request on your phone; after that, WGU should recognize this computer, the same way your everyday Edge does.
-2. Wait. When your Salesforce Caseload page appears, the login window **closes by itself**.
-3. The app window shows a loading screen the whole time. Once you're logged in, it says it's loading your caseload, which can take a minute or two, then the app opens.
+2. When your Salesforce Caseload page appears, a **Mongoose** tab opens in front, in the same window. Log in to Mongoose there too. Your caseload loads in the meantime.
+3. The app window shows a loading screen the whole time, then the app opens. Leave the Mongoose window open (you can minimize it): texts use it, so a run never stops to ask you to log in.
+4. Don't text? Close the Mongoose tab. The app opens anyway, and Mongoose only asks again if an Action sends a text.
 
 The app **never sees or saves your password**. The login window is Edge, using a separate Edge profile kept just for this app. If Edge offers to remember your password there, that's your choice, same as in your everyday Edge.
 
@@ -100,6 +101,7 @@ An OA pass only shows in Salesforce's **Essential Actions** list, not on your ca
 - **In Salesforce:** a note with the subject **OA Pass** and the text **Congratulated ST on passing OA**, saved with the Essential Action **closed**, just like **Add Note & Close EA**. There's no follow-up note.
 - If the note saves but the Essential Action stays open, the results list that student so you can close it by hand. Don't add a second note.
 - Anyone who can't be emailed (no OA passed email set up, or a course that isn't in Settings) is listed with the reason, and their Essential Action stays open.
+- Keep **Save notes directly to Salesforce (faster)** turned on in ⚙ Settings. OA emails work best that way.
 
 ### Personalizing emails
 
@@ -119,7 +121,7 @@ There are six ways to send. Every one shows you exactly who will be contacted fi
 - **✉️ Send Welcome Emails** (Dashboard) — runs each group's welcome Action. The review window shows each course's message before anything sends.
 - **🎯 Send Task Emails** (Dashboard) — emails students who just passed a task, using your course settings.
 - **🎓 Send OA Emails** (Dashboard) — emails students who passed an OA and closes their Essential Action with a note.
-- **🗂️ Run Action Batch** (Dashboard) — runs several Actions in an order you choose. **💾 Save Batch** keeps a combination you use often; pick it later from **Saved Batches**.
+- **🗂️ Run Action Batch** (Dashboard) — runs several Actions in an order you choose. **💾 Save Batch** keeps a combination you use often; pick it later from **Saved Batches**. The list also offers **Dashboard — Welcome Emails**, **Dashboard — Task Emails** and **Dashboard — OA Emails**, which do exactly what their Dashboard buttons do. Task Emails uses the Dashboard's **Days to look back** box. You review everything in one window before anything sends.
 - **📤 Send Email to All Students** (Dashboard) — a one-off email, such as a class cancellation, with an optional note.
 
 ### The review window
@@ -149,7 +151,7 @@ The day's log is a backup if you close that window by accident (see "Your data a
 
 Texting is **new and still being tested**. When an Action has **Send Text** checked, the app schedules each text in **Mongoose**:
 
-- A Mongoose window opens with the first text and stays open while the app is open, so you only log in when Mongoose asks. It closes with the app, or when you click **↻ Refresh Caseload**.
+- You log in to Mongoose right after Salesforce when the app starts, and its window stays open and signed in until you close the app, even through **↻ Refresh Caseload**. If you closed it, it opens again with the first text and asks you to log in.
 - You don't need to refresh before sending. If the caseload loaded more than 5 minutes ago, Welcome Emails, single Actions, batches and Send Email to All Students reload it first. **🎯 Send Task Emails** doesn't reload, since it's a once-a-day check. If a reload fails, you can try again, continue with the older roster, or cancel.
 - Each text goes out from the **department matching the student's course** (for example D424), so it lands in the right shared inbox.
 - **One message per class:** everyone in the same course who gets the same wording is added to **one** scheduled message, up to 25 students per message. If a field like {{student_name}} makes the wording different for each student, each one gets their own message.

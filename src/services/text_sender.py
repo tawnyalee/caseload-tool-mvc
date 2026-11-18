@@ -61,6 +61,15 @@ class TextSender(ABC):
         """Called once before a run that sends texts (e.g. to log in), so a
         problem stops the run before the first student. No-op by default."""
 
+    def open_login_tab(self) -> bool:
+        """Opens the texting site's login at startup, right after the
+        Salesforce login, without waiting. Returns whether it opened one
+        (then wait_for_login follows). No-op by default."""
+        return False
+
+    def wait_for_login(self) -> None:
+        """Waits for the login open_login_tab() started. No-op by default."""
+
     def finish(self) -> None:
         """Called once after such a run, even if it failed or was stopped
         (e.g. to close the browser). No-op by default."""
