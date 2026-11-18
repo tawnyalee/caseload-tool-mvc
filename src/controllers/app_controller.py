@@ -35,6 +35,7 @@ from src.services import oa_emails
 from src.services.merge_fields import render_merge_fields
 from src.services import salesforce_browser_session
 from src.services.browser_launch import login_window, playwright_session
+from src.services.keep_awake import keep_awake
 from src.services.salesforce_callbacks import (
     CASELOAD_APP_URL, EXPORT_BUTTON_SELECTOR, update_follow_up_fn, write_note_fn,
 )
@@ -1893,5 +1894,13 @@ class AppController:
             else:
                 messagebox.showerror(title, f"Something went wrong, and the run stopped:\n\n{exc}")
 
-        self.worker.submit(lambda: work(control), on_done=_finished, on_error=_failed)
+        def _work():
+            # The laptop stays awake, screen on, for the whole run, so a
+            # screensaver and lock can't freeze it (keep_awake.py).
+            with keep_awake() as accepted:
+                if not accepted:
+                    self.activity_logger.log("[KEEP AWAKE] Windows didn't accept the request to stay awake during this run")
+                return work(control)
+
+        self.worker.submit(_work, on_done=_finished, on_error=_failed)
     # endregion

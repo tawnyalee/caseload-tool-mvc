@@ -134,6 +134,9 @@ A progress window shows who's being sent to and how far along it is. The app sta
 
 - **⛔ Cancel after this student** (or **⛔ STOP Process**) finishes the current student, then cancels the rest.
 - If you close the app mid-run it asks first, because the current student could be left half-done (emailed, but no note yet).
+- While a run is going, the app keeps your laptop awake with the screen on, then lets your normal settings take over again when it ends. Many laptops pause programs once the screen turns off, which can freeze a run on one student.
+
+**Stepping away during a run?** Keep the laptop **plugged in** with the **lid open**, then press **Windows+L** to lock it. Locking doesn't stop the run, and nobody passing by sees student names. Your screensaver may still come on; that's fine as long as the screen doesn't go dark. If a run ever freezes on one student while you're away, tell us: your computer's settings may be overriding the app.
 
 ### Results
 

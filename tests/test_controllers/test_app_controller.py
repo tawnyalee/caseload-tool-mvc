@@ -1458,3 +1458,28 @@ def test_a_batch_with_task_emails_checks_the_days_and_signature_like_the_button(
     _bind_batch(controller)([TASK_EMAILS], [""], "")
     assert "signature" in mock_warning.call_args.args[1]
     mock_modal.assert_not_called()
+
+
+# --- Keep the laptop awake during runs (developer, 2026-11-18) ---
+
+@patch("controllers.app_controller.RunProgressModal")
+def test_every_background_run_keeps_the_laptop_awake_until_it_ends(_modal):
+    from contextlib import contextmanager
+    events = []
+
+    @contextmanager
+    def fake_keep_awake():
+        events.append("awake")
+        yield True
+        events.append("released")
+
+    controller = MagicMock()
+    controller._is_busy_and_told_user = lambda: False
+    controller.worker.submit.side_effect = lambda work, on_done, on_error: on_done(work())
+    with patch("controllers.app_controller.keep_awake", fake_keep_awake):
+        AppController._run_in_background(
+            controller, "Sending", lambda control: events.append("work") or "done",
+            on_finished=lambda result: events.append(f"finished {result}"),
+        )
+
+    assert events == ["awake", "work", "released", "finished done"]
